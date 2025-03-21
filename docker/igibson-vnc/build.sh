@@ -2,4 +2,4 @@
 
 IMAGE=igibson/igibson-vnc
 
-docker build -t $IMAGE
+docker build -t $IMAGE .

@@ -24,10 +24,12 @@ RUN bash Miniconda-latest-Linux-x86_64.sh -p /miniconda -b
 RUN rm Miniconda-latest-Linux-x86_64.sh
 ENV PATH=/miniconda/bin:${PATH}
 
+RUN apt-get update && apt-get install -y ca-certificates
 RUN conda update -y conda
-RUN conda create -y -n igibson python=3.8
+RUN conda --version
+RUN conda create -y -n igibson python
 
-ENV PATH /miniconda/envs/igibson/bin:$PATH
+ENV PATH=/miniconda/envs/igibson/bin:$PATH
 
 # NOTE: This needs to be updated in-step with the base cudagl image so the tensor renderer works
 RUN pip install torch==1.10.0+cu113 torchvision==0.11.1+cu113 torchaudio==0.10.0+cu113 -f https://download.pytorch.org/whl/cu113/torch_stable.html --no-cache-dir

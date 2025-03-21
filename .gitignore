@@ -8,18 +8,17 @@
 src/
 pw
 *.o
-*.ipynb
 *.ipynb_checkpoints/
 *.out
 npz/
 *.npy
 dev/transfer.c
-*.jpg
-*.png
 *.bmp
 *.bak
 *.zip
 .*.swp
+tests/*.png
+tests/*.jpg
 
 docs/apidoc
 
