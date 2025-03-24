@@ -68,16 +68,27 @@ class BaseEnv(gym.Env):
         texture_scale = self.config.get("texture_scale", 1.0)
 
         if self.rendering_settings is None:
+            print("Rendering settings is None - going with the default settings!")
             # TODO: We currently only support the optimized renderer due to some issues with obj highlighting.
             self.rendering_settings = MeshRendererSettings(
                 enable_shadow=enable_shadow,
                 enable_pbr=enable_pbr,
-                msaa=False,
+                msaa=self.config.get("msaa", False),
                 texture_scale=texture_scale,
                 optimized=self.config.get("optimized_renderer", True),
                 load_textures=self.config.get("load_texture", True),
                 hide_robot=self.config.get("hide_robot", True),
             )
+            # Changed suggestion
+            #self.rendering_settings = MeshRendererSettings(
+            #    enable_shadow=self.config.get("enable_shadow", True),
+            #    enable_pbr=self.config.get("enable_pbr", True),
+            #    msaa=True,  # Enable anti-aliasing for smoother edges
+            #    texture_scale=self.config.get("texture_scale", 2.0),  # Increase texture resolution
+            #    optimized=self.config.get("optimized_renderer", False),  # Disable optimized renderer for better visuals
+            #    load_textures=self.config.get("load_texture", True),  # Ensure textures are loaded
+            #    hide_robot=False  # Ensure the robot is visible
+            #)
 
         if mode == "vr":
             if self.vr_settings is None:

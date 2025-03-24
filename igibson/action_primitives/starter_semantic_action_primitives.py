@@ -41,8 +41,8 @@ MAX_WAIT_FOR_GRASP_OR_RELEASE = 10
 MAX_STEPS_FOR_WAYPOINT_NAVIGATION = 200
 
 MAX_ATTEMPTS_FOR_SAMPLING_POSE_WITH_OBJECT_AND_PREDICATE = 20
-MAX_ATTEMPTS_FOR_SAMPLING_POSE_NEAR_OBJECT = 60
-MAX_ATTEMPTS_FOR_SAMPLING_POSE_IN_ROOM = 60
+MAX_ATTEMPTS_FOR_SAMPLING_POSE_NEAR_OBJECT = 120 # was 60
+MAX_ATTEMPTS_FOR_SAMPLING_POSE_IN_ROOM = 120 # was 60
 
 BIRRT_SAMPLING_CIRCLE_PROBABILITY = 0.5
 HAND_SAMPLING_DOMAIN_PADDING = 1  # Allow 1m of freedom around the sampling range.
@@ -62,11 +62,12 @@ LOW_PRECISION_DIST_THRESHOLD = 0.1
 LOW_PRECISION_ANGLE_THRESHOLD = 0.2
 
 logger = logging.getLogger(__name__)
-
+# override for now
+#logger.setLevel(logging.DEBUG)
 
 def indented_print(msg, *args, **kwargs):
-    logger.debug("  " * len(inspect.stack()) + str(msg), *args, **kwargs)
-
+    #logger.debug("  " * len(inspect.stack()) + str(msg), *args, **kwargs)
+    print("  " * len(inspect.stack()) + str(msg), *args, **kwargs)
 
 def is_close(start_pose, end_pose, angle_threshold, dist_threshold):
     start_pos, start_orn = start_pose
@@ -636,6 +637,9 @@ class StarterSemanticActionPrimitives(BaseActionPrimitiveSet):
 
         yield from self._navigate_to_pose(pose)
 
+    def teleport_near_obj(self, obj):
+        self._sample_pose_near_object(obj)
+        
     def _navigate_to_pose_direct(self, pose_2d, low_precision=False):
         # First, rotate the robot to face towards the waypoint.
         # yield from self._rotate_in_place(pose_2d[2])
@@ -660,15 +664,23 @@ class StarterSemanticActionPrimitives(BaseActionPrimitiveSet):
 
     def _sample_pose_near_object(self, obj, pos_on_obj=None, **kwargs):
         if pos_on_obj is None:
-            pos_on_obj = self._sample_position_on_aabb_face(obj)
-
-        pos_on_obj = np.array(pos_on_obj)
-        obj_rooms = obj.in_rooms if obj.in_rooms else [self.scene.get_room_instance_by_point(pos_on_obj[:2])]
+            sample_pos_on_obj = True
+        else:
+            sample_pos_on_obj = False
+            
         for _ in range(MAX_ATTEMPTS_FOR_SAMPLING_POSE_NEAR_OBJECT):
+            # moved inside the loop or it makes no sense!!
+            if sample_pos_on_obj:
+                pos_on_obj = self._sample_position_on_aabb_face(obj)
+                pos_on_obj = np.array(pos_on_obj)
+                
+            obj_rooms = obj.in_rooms if obj.in_rooms else [self.scene.get_room_instance_by_point(pos_on_obj[:2])]
+        
+            indented_print(f"\nAttempt: {_}")
             distance = np.random.uniform(0.2, 1.0)
             yaw = np.random.uniform(-np.pi, np.pi)
             pose_2d = np.array(
-                [pos_on_obj[0] + distance * np.cos(yaw), pos_on_obj[1] + distance * np.sin(yaw), yaw + np.pi]
+                [pos_on_obj[0] + distance * np.cos(yaw), pos_on_obj[1] + distance * np.sin(yaw), yaw ]#+ np.pi]
             )
 
             # Check room
