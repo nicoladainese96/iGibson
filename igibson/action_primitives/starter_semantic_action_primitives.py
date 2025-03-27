@@ -61,12 +61,14 @@ DEFAULT_ANGLE_THRESHOLD = 0.05
 LOW_PRECISION_DIST_THRESHOLD = 0.1
 LOW_PRECISION_ANGLE_THRESHOLD = 0.2
 
+PHYSICS_STEPS = 50
+
 logger = logging.getLogger(__name__)
 # override for now
 #logger.setLevel(logging.DEBUG)
 
 def indented_print(msg, *args, **kwargs):
-    #logger.debug("  " * len(inspect.stack()) + str(msg), *args, **kwargs)
+    logger.debug("  " * len(inspect.stack()) + str(msg), *args, **kwargs)
     print("  " * len(inspect.stack()) + str(msg), *args, **kwargs)
 
 def is_close(start_pose, end_pose, angle_threshold, dist_threshold):
@@ -197,7 +199,7 @@ class StarterSemanticActionPrimitives(BaseActionPrimitiveSet):
             StarterSemanticActionPrimitive.PLACE_INSIDE: self.place_inside,
             StarterSemanticActionPrimitive.OPEN: self.open,
             StarterSemanticActionPrimitive.CLOSE: self.close,
-            StarterSemanticActionPrimitive.NAVIGATE_TO: self._navigate_to_obj,
+            StarterSemanticActionPrimitive.NAVIGATE_TO: self.teleport_near_obj, #self._navigate_to_obj,
         }
         self.arm = "right_hand"
 
@@ -628,17 +630,20 @@ class StarterSemanticActionPrimitives(BaseActionPrimitiveSet):
 
         yield from self._navigate_to_obj(obj, pos_on_obj=pos_on_obj, **kwargs)
 
-    def _navigate_to_obj(self, obj, pos_on_obj=None, **kwargs):
+    def _navigate_to_obj(self, obj, env, pos_on_obj=None, **kwargs):
         if isinstance(obj, RoomFloor):
             # TODO(lowprio-MP): Pos-on-obj for the room navigation?
             pose = self._sample_pose_in_room(obj.room_instance)
         else:
-            pose = self._sample_pose_near_object(obj, pos_on_obj=pos_on_obj, **kwargs)
+            pose = self._sample_pose_near_object(obj, env, pos_on_obj=pos_on_obj, **kwargs)
 
         yield from self._navigate_to_pose(pose)
 
-    def teleport_near_obj(self, obj):
-        self._sample_pose_near_object(obj)
+    def teleport_near_obj(self, obj, env):
+        pose_2d = self._sample_pose_near_object(obj, env)
+        self.robot.set_position_orientation(*self._get_robot_pose_from_2d_pose(pose_2d))
+        #print('robot pose', self._get_robot_pose_from_2d_pose(pose_2d))
+        return
         
     def _navigate_to_pose_direct(self, pose_2d, low_precision=False):
         # First, rotate the robot to face towards the waypoint.
@@ -662,7 +667,7 @@ class StarterSemanticActionPrimitives(BaseActionPrimitiveSet):
             {"target_pose": pose, "current_pose": self.robot.get_position_orientation()},
         )
 
-    def _sample_pose_near_object(self, obj, pos_on_obj=None, **kwargs):
+    def _sample_pose_near_object(self, obj, env, pos_on_obj=None, **kwargs):
         if pos_on_obj is None:
             sample_pos_on_obj = True
         else:
@@ -679,16 +684,32 @@ class StarterSemanticActionPrimitives(BaseActionPrimitiveSet):
             indented_print(f"\nAttempt: {_}")
             distance = np.random.uniform(0.2, 1.0)
             yaw = np.random.uniform(-np.pi, np.pi)
-            pose_2d = np.array(
-                [pos_on_obj[0] + distance * np.cos(yaw), pos_on_obj[1] + distance * np.sin(yaw), yaw ]#+ np.pi]
-            )
 
+            # we should look at the center of mass, not at a random point on the surface
+            object_center, orientation = obj.get_position_orientation()
+            print(object_center, pos_on_obj)
+            
+            pose_2d = np.array(
+                [pos_on_obj[0] + distance * np.cos(yaw), pos_on_obj[1] + distance * np.sin(yaw), yaw + np.pi] #yaw + np.pi]
+            )
+            
+            # Ok a bit ugly, but hopefully it works better
+            new_yaw = np.arctan2(object_center[1] - pose_2d[1], object_center[0] - pose_2d[0])
+            pose_2d[2] = new_yaw 
+            
+            print("Yaw: ", yaw, yaw/np.pi*180)
+            # Sanity check?
+            print("New yaw: ", new_yaw, new_yaw/np.pi*180)
+            # This is equivalent to new_yaw
+            #sanity_check_yaw = np.arctan2(pos_on_obj[1] - pose_2d[1], pos_on_obj[0] - pose_2d[0])
+            #print("Sanity check: ", sanity_check_yaw, sanity_check_yaw/np.pi*180)
+            
             # Check room
             if self.scene.get_room_instance_by_point(pose_2d[:2]) not in obj_rooms:
                 indented_print("Candidate position is in the wrong room.")
                 continue
 
-            if not self._test_pose(pose_2d, pos_on_obj=pos_on_obj, **kwargs):
+            if not self._test_pose(pose_2d, obj, env, pos_on_obj=pos_on_obj, **kwargs):
                 continue
 
             return pose_2d
@@ -779,10 +800,20 @@ class StarterSemanticActionPrimitives(BaseActionPrimitiveSet):
 
         return body or left or right
 
-    def _test_pose(self, pose_2d, pos_on_obj=None, check_joint=None):
+    def _test_pose(self, pose_2d, obj, env, pos_on_obj=None, check_joint=None):
         with UndoableContext(self.robot):
             self.robot.set_position_orientation(*self._get_robot_pose_from_2d_pose(pose_2d))
 
+            # Run some steps to let physics settle. - probably not needed anymore
+            #s = env.simulator
+            #for _ in range(PHYSICS_STEPS):
+            #    s.step() # is this going to break everything? not necessarily, but totally possible
+            
+            # Enforce object being visible - gives problems
+            #if not obj.states[object_states.InFOVOfRobot].get_value():
+            #    indented_print("Object not visible.")
+            #    return False
+                
             if pos_on_obj is not None:
                 hand_distance = self._get_dist_from_point_to_shoulder(pos_on_obj)
                 if hand_distance > HAND_DISTANCE_THRESHOLD:
