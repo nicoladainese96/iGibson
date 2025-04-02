@@ -724,7 +724,7 @@ class StarterSemanticActionPrimitives(BaseActionPrimitiveSet):
         # We want to sample only from the side-facing faces.
         face_normal_axis = random.choice([0, 1])
         face_normal_direction = random.choice([-1, 1])
-        face_center = aabb_center + np.eye(3)[face_normal_axis] * aabb_extent * face_normal_direction
+        face_center = aabb_center + np.eye(3)[face_normal_axis] * (aabb_extent*0.5) * face_normal_direction
         face_lateral_axis = 0 if face_normal_axis == 1 else 1
         face_lateral_half_extent = np.eye(3)[face_lateral_axis] * aabb_extent / 2
         face_vertical_half_extent = np.eye(3)[2] * aabb_extent / 2
