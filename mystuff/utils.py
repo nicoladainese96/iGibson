@@ -52,7 +52,7 @@ def render_robot_pov(env, env_config, step, show=False, save=True, path='./image
     
     # Set the camera in the renderer
     s.renderer.set_camera(camera_pose, camera_pose + forward_downward_direction, up_direction)
-    s.renderer.set_fov(120)
+    s.renderer.set_fov(90)
     frame = s.renderer.render(modes=("rgb"))[0]
     rgb_image = (frame[..., :3] * 255).astype(np.uint8) 
     
