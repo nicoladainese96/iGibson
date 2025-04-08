@@ -1,4 +1,5 @@
 import numpy as np
+import pyquaternion # import for custom code 
 
 from igibson.object_states.object_state_base import BooleanState, CachingEnabledObjectState
 from igibson.object_states.pose import Pose
@@ -114,7 +115,10 @@ class InFOVOfRobot(CachingEnabledObjectState, BooleanState):
             return False
 
         body_ids = set(self.obj.get_body_ids())
-        return not body_ids.isdisjoint(robot.states[ObjectsInFOVOfRobot].get_value())
+        #print(robot.states)
+        #print(ObjectsInFOVOfRobot)
+        #print(robot.states[ObjectsInFOVOfRobot])
+        return not body_ids.isdisjoint(robot.states[ObjectsInFOVOfRobot].get_value()) # this one is crushing badly
 
     def _set_value(self, new_value):
         raise NotImplementedError("InFOVOfRobot state currently does not support setting.")
@@ -133,7 +137,8 @@ class ObjectsInFOVOfRobot(CachingEnabledObjectState):
 
     def _compute_value(self):
         # Pass the FOV through the instance-to-body ID mapping.
-        seg = self.simulator.renderer.render_single_robot_camera(self.obj, modes="ins_seg")[0][:, :, 0]
+        seg = self.render_single_robot_camera(modes="ins_seg")[0][:, :, 0] 
+        #seg = self.simulator.renderer.render_single_robot_camera(self.obj, modes="ins_seg")[0][:, :, 0] # why self.obj was passed?? - should be the robot?
         seg = np.round(seg * MAX_INSTANCE_COUNT).astype(int)
         body_ids = self.simulator.renderer.get_pb_ids_for_instance_ids(seg)
 
@@ -150,3 +155,62 @@ class ObjectsInFOVOfRobot(CachingEnabledObjectState):
 
     def load(self, data):
         pass
+
+    def render_single_robot_camera(self, modes=("rgb")):
+        # Apparently every object has access to the simulator as an attribute
+        robot = self.simulator.scene.robots[0]
+        r = self.simulator.renderer
+        
+        hide_instances = robot.renderer_instances if r.rendering_settings.hide_robot else []
+        
+        # Let's use our own camera instead
+        set_camera(self.simulator, robot)
+        
+        # No idea why this loop is needed, anyway it's a single element list
+        frames = []
+        for item in r.render(modes=modes, hidden=hide_instances):
+            frames.append(item)
+        return frames
+
+
+def set_camera(s,
+               robot,
+               field_of_view=120,
+               forward_downward_dir=None,
+               up_dir=None,
+               camera_pos_offset=None,
+               apply_q_rotation=True
+              ):
+    # Set default values
+    if forward_downward_dir is None:
+        forward_downward_dir = np.array([1, 0, -0.25])
+    if up_dir is None:
+        up_dir = np.array([0, 0, 1])
+    if camera_pos_offset is None:
+        camera_pos_offset = np.array([0.1, 0.1, 0.7])
+
+    robot_pos, q = get_robot_pos_and_q_rotation(robot)
+
+    if apply_q_rotation:
+        # Apply rotations to see all directions in the frame of the robot
+        camera_pos = robot_pos + q.rotate(camera_pos_offset) # Slightly above the robot's center
+        forward_downward_direction = q.rotate(forward_downward_dir) # Forward wrt the robot's frame of reference 
+        up_direction = up_dir # up is up no matter the frame of reference, unless the robot is doing something weird
+    else:
+        camera_pos = robot_pos + camera_pos_offset
+        forward_downward_direction = forward_downward_dir
+        up_direction = up_dir
+
+    # Set the camera in the renderer
+    s.renderer.set_camera(camera_pos, camera_pos + forward_downward_direction, up_direction)
+    s.renderer.set_fov(field_of_view)
+
+def get_robot_pos_and_q_rotation(robot):
+    robot_pos, robot_orientation = robot.get_position_orientation()
+    
+    # Convert quaternion to rotation matrix - takes w,x,y,z in input, but robot orientation is given as x,y,z,w !!!
+    q = pyquaternion.Quaternion(x=robot_orientation[0], 
+                                y=robot_orientation[1], 
+                                z=robot_orientation[2], 
+                                w=robot_orientation[3])
+    return robot_pos, q

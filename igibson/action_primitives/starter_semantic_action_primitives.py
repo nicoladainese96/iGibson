@@ -61,7 +61,7 @@ DEFAULT_ANGLE_THRESHOLD = 0.05
 LOW_PRECISION_DIST_THRESHOLD = 0.1
 LOW_PRECISION_ANGLE_THRESHOLD = 0.2
 
-PHYSICS_STEPS = 50
+PHYSICS_STEPS = 3
 
 logger = logging.getLogger(__name__)
 # override for now
@@ -672,7 +672,7 @@ class StarterSemanticActionPrimitives(BaseActionPrimitiveSet):
             sample_pos_on_obj = True
         else:
             sample_pos_on_obj = False
-            
+
         for _ in range(MAX_ATTEMPTS_FOR_SAMPLING_POSE_NEAR_OBJECT):
             # moved inside the loop or it makes no sense!!
             if sample_pos_on_obj:
@@ -682,12 +682,13 @@ class StarterSemanticActionPrimitives(BaseActionPrimitiveSet):
             obj_rooms = obj.in_rooms if obj.in_rooms else [self.scene.get_room_instance_by_point(pos_on_obj[:2])]
         
             indented_print(f"\nAttempt: {_}")
-            distance = np.random.uniform(0.2, 1.0)
+            distance = np.random.uniform(0.4, 0.9)
             yaw = np.random.uniform(-np.pi, np.pi)
+            #yaw = np.random.uniform(-np.pi/2, np.pi/2)
 
             # we should look at the center of mass, not at a random point on the surface
             object_center, orientation = obj.get_position_orientation()
-            print(object_center, pos_on_obj)
+            #print(object_center, pos_on_obj)
             
             pose_2d = np.array(
                 [pos_on_obj[0] + distance * np.cos(yaw), pos_on_obj[1] + distance * np.sin(yaw), yaw + np.pi] #yaw + np.pi]
@@ -697,17 +698,17 @@ class StarterSemanticActionPrimitives(BaseActionPrimitiveSet):
             new_yaw = np.arctan2(object_center[1] - pose_2d[1], object_center[0] - pose_2d[0])
             pose_2d[2] = new_yaw 
             
-            print("Yaw: ", yaw, yaw/np.pi*180)
+            #print("Yaw: ", yaw, yaw/np.pi*180)
             # Sanity check?
-            print("New yaw: ", new_yaw, new_yaw/np.pi*180)
+            #print("New yaw: ", new_yaw, new_yaw/np.pi*180)
             # This is equivalent to new_yaw
             #sanity_check_yaw = np.arctan2(pos_on_obj[1] - pose_2d[1], pos_on_obj[0] - pose_2d[0])
             #print("Sanity check: ", sanity_check_yaw, sanity_check_yaw/np.pi*180)
             
             # Check room
-            if self.scene.get_room_instance_by_point(pose_2d[:2]) not in obj_rooms:
-                indented_print("Candidate position is in the wrong room.")
-                continue
+            #if self.scene.get_room_instance_by_point(pose_2d[:2]) not in obj_rooms:
+            #    indented_print("Candidate position is in the wrong room.")
+            #    continue
 
             if not self._test_pose(pose_2d, obj, env, pos_on_obj=pos_on_obj, **kwargs):
                 continue
@@ -805,14 +806,15 @@ class StarterSemanticActionPrimitives(BaseActionPrimitiveSet):
             self.robot.set_position_orientation(*self._get_robot_pose_from_2d_pose(pose_2d))
 
             # Run some steps to let physics settle. - probably not needed anymore
-            #s = env.simulator
-            #for _ in range(PHYSICS_STEPS):
-            #    s.step() # is this going to break everything? not necessarily, but totally possible
+            s = env.simulator
+            for _ in range(PHYSICS_STEPS):
+                s.step() # is this going to break everything? not necessarily, but totally possible
             
-            # Enforce object being visible - gives problems
-            #if not obj.states[object_states.InFOVOfRobot].get_value():
-            #    indented_print("Object not visible.")
-            #    return False
+            # Enforce object being visible - gives problems -> why??
+            # Is this even updated when the robot position is changed or does it require some time?
+            if not obj.states[object_states.InFOVOfRobot].get_value():
+                indented_print("Object not visible.")
+                return False
                 
             if pos_on_obj is not None:
                 hand_distance = self._get_dist_from_point_to_shoulder(pos_on_obj)
