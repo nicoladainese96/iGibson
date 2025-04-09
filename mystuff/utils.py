@@ -3,8 +3,11 @@ import behavior
 import pyquaternion  
 import numpy as np
 from PIL import Image
+
 from igibson.utils.utils import parse_config
+from igibson import object_states
 from igibson.envs.igibson_env import iGibsonEnv
+
 from render_utils import set_camera_look_obj
 
 def get_env_config():
@@ -77,6 +80,16 @@ def teleport_near_obj(controller, obj, env):
     controller.teleport_near_obj(obj, env)
     #set_camera_look_obj(env, obj) # not sure it's needed, but maybe?
 
+def print_properties(obj):
+    """
+    Requires from igibson import object_states
+    """
+    logic_state = {}
+    state_keys = ['InFOVOfRobot', 'InSameRoomAsRobot', 'InReachOfRobot']
+
+    logic_state = {key: obj.states[getattr(object_states, key)].get_value() for key in state_keys}
+
+    print(logic_state)
 ### Old functions ###
 
 def render_robot_pov(env, env_config, step, show=False, save=True, path='./images/initial_scenes'):

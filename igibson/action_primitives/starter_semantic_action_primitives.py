@@ -673,6 +673,45 @@ class StarterSemanticActionPrimitives(BaseActionPrimitiveSet):
         else:
             sample_pos_on_obj = False
 
+        object_center, orientation = obj.get_position_orientation()
+        #print(object_center, orientation)
+
+        def point_in_front(position, orientation, distance=1.0, local_forward=[0, 1, 0]):
+            
+            def wxyz_to_xyzw(quat_wxyz):
+                w, x, y, z = quat_wxyz
+                return [x, y, z, w]
+                
+            # Rotate the local forward vector to world space
+            world_forward = p.rotateVector(wxyz_to_xyzw(orientation), local_forward)
+            
+            # Offset the position along the world-space forward vector
+            position = np.array(position)
+            world_forward = np.array(world_forward)
+            
+            return position + distance * world_forward
+
+        def point_in_front_with_local_yaw(position, orientation, distance=1.0, yaw_offset_deg=0.0, local_forward=[0, 1, 0]):
+        
+            def wxyz_to_xyzw(quat_wxyz):
+                w, x, y, z = quat_wxyz
+                return [x, y, z, w]
+        
+            # Step 1: Yaw rotation in local frame
+            yaw_offset_rad = np.radians(yaw_offset_deg)
+            local_yaw_rot = Rotation.from_euler('z', yaw_offset_rad).apply(local_forward)
+        
+            # Step 2: Rotate the offset local direction into world space
+            orientation_xyzw = wxyz_to_xyzw(orientation)
+            world_direction = p.rotateVector(orientation_xyzw, local_yaw_rot)
+        
+            # Step 3: Compute final point
+            position = np.array(position)
+            world_direction = np.array(world_direction)
+        
+            return position + distance * world_direction
+
+
         for _ in range(MAX_ATTEMPTS_FOR_SAMPLING_POSE_NEAR_OBJECT):
             # moved inside the loop or it makes no sense!!
             if sample_pos_on_obj:
@@ -680,19 +719,20 @@ class StarterSemanticActionPrimitives(BaseActionPrimitiveSet):
                 pos_on_obj = np.array(pos_on_obj)
                 
             obj_rooms = obj.in_rooms if obj.in_rooms else [self.scene.get_room_instance_by_point(pos_on_obj[:2])]
-        
+
             indented_print(f"\nAttempt: {_}")
             distance = np.random.uniform(0.4, 0.9)
-            yaw = np.random.uniform(-np.pi, np.pi)
+            #yaw = np.random.uniform(-np.pi, np.pi)
             #yaw = np.random.uniform(-np.pi/2, np.pi/2)
-
-            # we should look at the center of mass, not at a random point on the surface
-            object_center, orientation = obj.get_position_orientation()
-            #print(object_center, pos_on_obj)
+            yaw = np.random.uniform(-45,45)
+            #print(f"Trying rotation of {yaw:1f} degrees and distance of {distance:1f} meters")
             
-            pose_2d = np.array(
-                [pos_on_obj[0] + distance * np.cos(yaw), pos_on_obj[1] + distance * np.sin(yaw), yaw + np.pi] #yaw + np.pi]
-            )
+            # Should be straight in front of the object - works
+            # pose_2d = point_in_front(object_center, orientation, distance)
+            pose_2d = point_in_front_with_local_yaw(object_center, orientation, distance, yaw_offset_deg=yaw)
+
+            # Original function
+            #pose_2d = np.array([pos_on_obj[0] + distance * np.cos(yaw), pos_on_obj[1] + distance * np.sin(yaw), yaw + np.pi])
             
             # Ok a bit ugly, but hopefully it works better
             new_yaw = np.arctan2(object_center[1] - pose_2d[1], object_center[0] - pose_2d[0])
