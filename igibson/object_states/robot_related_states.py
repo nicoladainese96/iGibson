@@ -10,6 +10,7 @@ _IN_REACH_DISTANCE_THRESHOLD = 2.0
 
 _IN_FOV_PIXEL_FRACTION_THRESHOLD = 0.05
 
+MIN_PIXEL_VISIBLE = 200
 
 def _get_robot(simulator):
     valid_robots = [robot for robot in simulator.scene.robots]
@@ -142,9 +143,25 @@ class ObjectsInFOVOfRobot(CachingEnabledObjectState):
         seg = np.round(seg * MAX_INSTANCE_COUNT).astype(int)
         body_ids = self.simulator.renderer.get_pb_ids_for_instance_ids(seg)
 
+        # Flatten to 1D for easy counting of pixels per body ID
+        flat_ids = body_ids.flatten()
+    
+        # Count pixels per body ID using bincount
+        unique_ids, counts = np.unique(flat_ids, return_counts=True)
+        
+        # Debug print
+        # print({obj_id: count for obj_id, count in zip(unique_ids, counts) if obj_id != -1})
+
+        visible_ids = {
+            obj_id for obj_id, count in zip(unique_ids, counts)
+            if obj_id != -1 and count >= MIN_PIXEL_VISIBLE
+        }
+    
+        return visible_ids
+
         # Pixels that don't contain an object are marked -1 but we don't want to include that
         # as a body ID.
-        return set(np.unique(body_ids)) - {-1}
+        #return set(np.unique(body_ids)) - {-1}
 
     def _set_value(self, new_value):
         raise NotImplementedError("ObjectsInFOVOfRobot state currently does not support setting.")
