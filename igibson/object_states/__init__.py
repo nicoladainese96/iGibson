@@ -20,6 +20,8 @@ from igibson.object_states.robot_related_states import (
     InReachOfRobot,
     InSameRoomAsRobot,
     ObjectsInFOVOfRobot,
+    VisiblePixelCountFromRobot, # add also to object_state.factory so that it gets added to object.states
+    IsVisible
 )
 from igibson.object_states.room_states import (
     ROOM_STATES,
