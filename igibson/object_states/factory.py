@@ -20,6 +20,7 @@ _ALL_STATES = frozenset(
         InSameRoomAsRobot,
         Inside,
         InsideRoomTypes,
+        IsVisible,
         MaxTemperature,
         NextTo,
         ObjectsInFOVOfRobot,
@@ -36,6 +37,7 @@ _ALL_STATES = frozenset(
         Touching,
         Under,
         VerticalAdjacency,
+        VisiblePixelCountFromRobot,
         WaterSource,
     ]
     + ROOM_STATES
@@ -66,11 +68,13 @@ _DEFAULT_STATE_SET = frozenset(
         InReachOfRobot,
         InSameRoomAsRobot,
         Inside,
+        IsVisible,
         NextTo,
         OnFloor,
         OnTop,
         Touching,
         Under,
+        VisiblePixelCountFromRobot
     ]
 )
 
