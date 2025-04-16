@@ -1,6 +1,6 @@
 /mystuff/images/initial_scenes
 /mystuff/images/rendering_attempts
-
+/mystuff/images/*.jpg
 *.pyc
 *.pyd
 *.pkl
