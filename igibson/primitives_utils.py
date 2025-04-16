@@ -7,7 +7,7 @@ from igibson import object_states
 from igibson.action_primitives.starter_semantic_action_primitives import StarterSemanticActionPrimitives
 import igibson.render_utils as render_utils
 
-PHYSICS_STEPS = 50
+PHYSICS_STEPS = 30
 
 def get_controller(env):
     controller = StarterSemanticActionPrimitives(None, env.scene, env.robots[0]) 
@@ -85,6 +85,7 @@ def print_status_within_container(env, container_obj, max_distance_from_shoulder
 
             is_near = controller._get_dist_from_point_to_shoulder(obj2.get_position()) < max_distance_from_shoulder
             print(f'{name} is near: {is_near}')
+            print(f'Distance from shoulder: {controller._get_dist_from_point_to_shoulder(obj2.get_position()):.3f}')
         
 def get_names_of_visible_obj_inside(env, container_obj):
     filtered_object_names_list = get_task_objects(env)
@@ -182,7 +183,8 @@ def open_and_make_all_obj_visible(
     container_obj,
     outer_attempts=5, 
     inner_attempts=200, 
-    physics_steps=30, 
+    physics_steps=5, 
+    physics_steps_extra=15,
     max_distance_from_shoulder=1.0,
     debug=False
 ):
@@ -204,7 +206,7 @@ def open_and_make_all_obj_visible(
             restoreState(original_container_state)
             for obj in objects_to_wake:
                 obj.force_wakeup()
-            settle_physics(env)
+            settle_physics(env, steps=2) # no need to have much steps here
 
         if debug:
             render_utils.render_frame(env, show=True, save=True, name=f'debug-before-opening-{i}')
@@ -214,22 +216,31 @@ def open_and_make_all_obj_visible(
 
         if debug:
             render_utils.render_frame(env, show=True, save=True, name=f'debug-after-opening-{i}')
-            
+
+        objects_positioned = []
+        
         # For every object inside the container, apply the function and render the state after the function call
         for name, trg_obj in zip(names, objects):
-            print(f"Making visible {name}")
+            if debug: print(f"Making visible {name}")
             
             success, info = make_visible(
-                env, controller, trg_obj, container_obj, sampling_budget=inner_attempts, physics_steps=physics_steps, max_distance_from_shoulder=max_distance_from_shoulder
+                env, controller, trg_obj, container_obj, objects_positioned, 
+                sampling_budget=inner_attempts, 
+                physics_steps=physics_steps, 
+                physics_steps_extra=physics_steps_extra, 
+                max_distance=max_distance_from_shoulder
             )
-            print(f"Success: {success}")
-            print(info)
+            if debug:
+                print(f"Success: {success}")
+                print(info)
 
-            # Print an update on all states of the objects involved
-            print_status_within_container(env, container_obj)
+                # Print an update on all states of the objects involved
+                print_status_within_container(env, container_obj)
             
             if success:
-                render_utils.render_frame_with_trg_obj(env, trg_obj, show=True, save=True, add_bbox=True, name=f'after-rearranging-{name}-attempt{i}')
+                objects_positioned.append(trg_obj) # Used to enforce more stingent constraints on the next samples
+                if debug:
+                    render_utils.render_frame_with_trg_obj(env, trg_obj, show=True, save=True, add_bbox=True, name=f'after-rearranging-{name}-attempt{i}')
             else:
                 # If not successful, assume that the configuration of free visible space in the container is not enough to relocate the trg_obj
                 # -> better sample a new one
@@ -239,19 +250,48 @@ def open_and_make_all_obj_visible(
         all_visible = np.all([trg_obj.states[object_states.IsVisible].get_value(env=env) for trg_obj in objects])
         all_inside = np.all([trg_obj.states[object_states.inside.Inside].get_value(container_obj) for trg_obj in objects])
         all_near = np.all([controller._get_dist_from_point_to_shoulder(trg_obj.get_position()) < max_distance_from_shoulder for trg_obj in objects])
-        for name, trg_obj in zip(names, objects):
-            print(f"{name} IsVisible: ", trg_obj.states[object_states.IsVisible].get_value(env=env))
-            print(f"{name} IsInside: ", trg_obj.states[object_states.inside.Inside].get_value(container_obj))
-            print(f"{name} IsNear: ", controller._get_dist_from_point_to_shoulder(trg_obj.get_position()) < max_distance_from_shoulder)
+
+        if debug:
+            for name, trg_obj in zip(names, objects):
+                print(f"{name} IsVisible: ", trg_obj.states[object_states.IsVisible].get_value(env=env))
+                print(f"{name} IsInside: ", trg_obj.states[object_states.inside.Inside].get_value(container_obj))
+                print(f"{name} IsNear: ", controller._get_dist_from_point_to_shoulder(trg_obj.get_position()) < max_distance_from_shoulder)
+                print(f'Distance from shoulder: {controller._get_dist_from_point_to_shoulder(trg_obj.get_position()):.3f}')
+                
+            print(f"all_visible: {all_visible} - all_inside: {all_inside} - all_near: {all_near}")
             
-        print(f"all_visible: {all_visible} - all_inside: {all_inside} - all_near: {all_near}")
         if all_visible and all_inside and all_near:
             return True
     
     return False
-            
+
+def all_conditions_satisfied(env, controller, trg_obj, container_obj, objects_positioned, max_distance):
+    """
+    Efficient check for all 4 conditions needed for the sample to be accepted. Check them one by one from the fastest and return False at the first False instance.
+    """
+    is_visible = trg_obj.states[object_states.IsVisible].get_value(env=env)
+    if not is_visible:
+        return False
+    else:
+        is_inside = trg_obj.states[object_states.inside.Inside].get_value(container_obj)
+        if not is_inside:
+            return False
+        else:
+            has_collisions = check_collision_one_body(trg_obj)
+            if has_collisions:
+                return False
+            else:
+                is_near = controller._get_dist_from_point_to_shoulder(trg_obj.get_position()) < max_distance
+                if not is_near:
+                    return False
+                else:
+                    all_visible = np.all([obj_already_visible.states[object_states.IsVisible].get_value(env=env) for obj_already_visible in objects_positioned])
+                    if all_visible:
+                        return True
+                    else:
+                        return False
         
-def make_visible(env, controller, trg_obj, container_obj, sampling_budget = 100, physics_steps=10, max_distance_from_shoulder=0.8):
+def make_visible(env, controller, trg_obj, container_obj, objects_positioned=[], sampling_budget = 100, physics_steps=5, physics_steps_extra=15, max_distance=0.8):
     # 1. Check that container_obj is open, if not, raise an error (return success = False plus some info)
     container_is_open = container_obj.states[object_states.Open].get_value()
     
@@ -263,7 +303,7 @@ def make_visible(env, controller, trg_obj, container_obj, sampling_budget = 100,
     # Get initial predicates for the target object - give for granted that has_collisions = False
     is_inside = trg_obj.states[object_states.inside.Inside].get_value(container_obj)
     is_visible = trg_obj.states[object_states.IsVisible].get_value(env=env)
-    is_near = controller._get_dist_from_point_to_shoulder(trg_obj.get_position()) < max_distance_from_shoulder
+    is_near = controller._get_dist_from_point_to_shoulder(trg_obj.get_position()) < max_distance
     
     if is_inside and is_visible and is_near:
         # 2. If trg_obj is inside the container and is visible, return success = True plus some info
@@ -291,30 +331,20 @@ def make_visible(env, controller, trg_obj, container_obj, sampling_budget = 100,
         # Sample 3d point inside the container volume
         candidate_pos = sample_point_in_container(container_obj)
 
-        is_near = controller._get_dist_from_point_to_shoulder(candidate_pos) < max_distance_from_shoulder
+        is_near = controller._get_dist_from_point_to_shoulder(candidate_pos) < max_distance 
         if is_near:
                 
             # Set the object position to the candidate_pos
             trg_obj.set_position(candidate_pos)
             
-            # Do 10-20 steps of the simulator and check for both isInside and isVisible
+            # Do 'physics_steps' steps of the simulator and then check for all conditions - this is the heaviest part
             settle_physics(env, physics_steps)
             
-            is_inside = trg_obj.states[object_states.inside.Inside].get_value(container_obj)
-            is_visible = trg_obj.states[object_states.IsVisible].get_value(env=env)
-            is_near = controller._get_dist_from_point_to_shoulder(candidate_pos) < max_distance_from_shoulder
-            has_collisions = check_collision_one_body(trg_obj)
-            
-            if is_inside and is_visible and is_near and not has_collisions:
+            if all_conditions_satisfied(env, controller, trg_obj, container_obj, objects_positioned, max_distance):
                 # For promising candidates, check for longer times
-                settle_physics(env, physics_steps)
-                
-                is_inside = trg_obj.states[object_states.inside.Inside].get_value(container_obj)
-                is_visible = trg_obj.states[object_states.IsVisible].get_value(env=env)
-                is_near = controller._get_dist_from_point_to_shoulder(candidate_pos) < max_distance_from_shoulder
-                has_collisions = check_collision_one_body(trg_obj)
-                
-                if is_inside and is_visible and is_near and not has_collisions:
+                settle_physics(env, physics_steps_extra)
+
+                if all_conditions_satisfied(env, controller, trg_obj, container_obj, objects_positioned, max_distance):
                     break
         
         # If the budget ends without success, restore initial object position, return success = False and some info

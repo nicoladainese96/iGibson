@@ -42,7 +42,7 @@ def set_camera(s,
     if camera_pos_offset is None:
         camera_pos_offset = np.array([0.1, 0.1, 0.7])
 
-    robot_pos, q = get_robot_pos_and_q_rotation(robot)
+    robot_pos, q = render_utils.get_robot_pos_and_q_rotation(robot)
 
     if apply_q_rotation:
         # Apply rotations to see all directions in the frame of the robot
@@ -57,17 +57,6 @@ def set_camera(s,
     # Set the camera in the renderer
     s.renderer.set_camera(camera_pos, camera_pos + forward_downward_direction, up_direction)
     s.renderer.set_fov(field_of_view)
-
-def get_robot_pos_and_q_rotation(robot):
-    robot_pos, robot_orientation = robot.get_position_orientation()
-    
-    # Convert quaternion to rotation matrix - takes w,x,y,z in input, but robot orientation is given as x,y,z,w !!!
-    q = pyquaternion.Quaternion(x=robot_orientation[0], 
-                                y=robot_orientation[1], 
-                                z=robot_orientation[2], 
-                                w=robot_orientation[3])
-    return robot_pos, q
-
 
 def compute_projected_area(uv_coords):
     """
@@ -225,13 +214,7 @@ class IsVisible(CachingEnabledObjectState, BooleanState):
             # formed by the vertices of the object bounding box. As this is not a tight box, ratios of ~8% are usually 
             # enough to consider an object visible
             
-            bbox_vertices_uv = render_utils.render_frame_with_trg_obj(env, 
-                                                                      self.obj, 
-                                                                      show=False, 
-                                                                      save=False, 
-                                                                      add_bbox=True, 
-                                                                      return_uv_coord=True
-                                                                     )
+            bbox_vertices_uv = render_utils.get_bbox_vertices_uv(env, self.obj)
             
             projected_bbox_pixels = compute_projected_area(bbox_vertices_uv)
             return (total_visible_pixels / (projected_bbox_pixels + 1)) >= relative_threshold 

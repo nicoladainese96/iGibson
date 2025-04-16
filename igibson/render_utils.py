@@ -141,7 +141,7 @@ def render_frame_with_trg_obj(env,
                              ):
     #set_camera_look_obj(env, obj, **kwargs) # doesn't work well for now
     set_camera_look_ahead(env, **kwargs)
-    image = get_image_from_camera(env.simulator)
+    image = get_image_from_camera(env.simulator) # this takes 99% of the time of the function
 
     if add_obj_center:
         obj_center_uv = get_obj_center_uv(env, obj)
@@ -164,6 +164,16 @@ def render_frame_with_trg_obj(env,
         bbox_vertices_uv = np.stack([image.width - bbox_vertices_uv[:,0], bbox_vertices_uv[:,1]], axis=1)
         return bbox_vertices_uv
 
+def get_bbox_vertices_uv(env, obj, **kwargs):
+    # Getting the bounding box vertices does not need rendering the whole image, so this function is used to provide 
+    # the bbox when it's needed exclusively and efficiently for the isVisible predicate
+    
+    set_camera_look_ahead(env, **kwargs)
+    bbox_vertices_uv = get_bbox_vertices_uv(env, obj)
+    # Change u in image width - u for completeness
+    bbox_vertices_uv = np.stack([env.config['image_width'] - bbox_vertices_uv[:,0], bbox_vertices_uv[:,1]], axis=1)
+    return bbox_vertices_uv
+    
 def render_robot_eye_pov(env, show=True, save=False, path='images/', name='robot_eyes_view'):
     r = env.simulator.renderer
     robot = env.robots[0]
