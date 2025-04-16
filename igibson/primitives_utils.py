@@ -262,7 +262,13 @@ def open_and_make_all_obj_visible(
             
         if all_visible and all_inside and all_near:
             return True
-    
+
+    # If function fails, restore to initial state the environment
+    restoreState(original_container_state)
+    for obj in objects_to_wake:
+        obj.force_wakeup()
+    settle_physics(env, steps=2) # no need to have much steps here
+
     return False
 
 def all_conditions_satisfied(env, controller, trg_obj, container_obj, objects_positioned, max_distance):

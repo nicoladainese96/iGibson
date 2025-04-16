@@ -17,8 +17,8 @@ def get_env_config():
         )
     env_config = parse_config(env_config_file)
     # Modify env_config - later we can make our own
-    env_config['image_width'] = 1080
-    env_config['image_height'] = 1080
+    env_config['image_width'] = 480 #1080
+    env_config['image_height'] = 480 #1080
 
     # Improve realism
     env_config["enable_pbr"] = True
