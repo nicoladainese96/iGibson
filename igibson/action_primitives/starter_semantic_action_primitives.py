@@ -36,8 +36,8 @@ from igibson.utils.utils import restoreState
 
 MAX_STEPS_FOR_HAND_MOVE = 100
 MAX_STEPS_FOR_HAND_MOVE_WHEN_OPENING = 30
-MAX_STEPS_FOR_GRASP_OR_RELEASE = 30
-MAX_WAIT_FOR_GRASP_OR_RELEASE = 10
+MAX_STEPS_FOR_GRASP_OR_RELEASE = 10
+MAX_WAIT_FOR_GRASP_OR_RELEASE = 2
 MAX_STEPS_FOR_WAYPOINT_NAVIGATION = 200
 
 MAX_ATTEMPTS_FOR_SAMPLING_POSE_WITH_OBJECT_AND_PREDICATE = 20
@@ -453,7 +453,7 @@ class StarterSemanticActionPrimitives(BaseActionPrimitiveSet):
         if obj_in_hand.states[predicate].get_value(obj):
             return
 
-    def _move_hand(self, target_pose):
+    def _move_hand(self, target_pose, stop_on_contact=False):
         target_pose_in_correct_format = list(target_pose[0]) + list(p.getEulerFromQuaternion(target_pose[1]))
 
         # Define the sampling domain.
@@ -484,7 +484,7 @@ class StarterSemanticActionPrimitives(BaseActionPrimitiveSet):
         for i, xyz_rpy in enumerate(plan):
             indented_print("Executing grasp plan step %d/%d", i + 1, len(plan))
             pose = (xyz_rpy[:3], p.getQuaternionFromEuler(xyz_rpy[3:]))
-            yield from self._move_hand_direct(pose)
+            yield from self._move_hand_direct(pose, stop_on_contact=stop_on_contact)
 
     def _move_hand_direct(self, target_pose, **kwargs):
         yield from self._move_hand_direct_relative_to_robot(self._get_pose_in_robot_frame(target_pose), **kwargs)
@@ -530,7 +530,7 @@ class StarterSemanticActionPrimitives(BaseActionPrimitiveSet):
 
         # Do nothing for a bit so that AG can trigger.
         for _ in range(MAX_WAIT_FOR_GRASP_OR_RELEASE):
-            yield np.zeros(self.robot.action_dim)
+            yield action #np.zeros(self.robot.action_dim)
 
         if self._get_obj_in_hand() is None:
             raise ActionPrimitiveError(
