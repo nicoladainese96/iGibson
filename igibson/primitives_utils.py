@@ -182,7 +182,7 @@ def open_and_make_all_obj_visible(
     env,
     container_obj,
     outer_attempts=5, 
-    inner_attempts=200, 
+    inner_attempts=300, 
     physics_steps=5, 
     physics_steps_extra=15,
     max_distance_from_shoulder=1.0,
