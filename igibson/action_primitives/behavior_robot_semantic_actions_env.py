@@ -11,7 +11,7 @@ from igibson.utils.grasp_planning_utils import get_grasp_poses_for_object
 MAX_STEPS_FOR_GRASP_OR_RELEASE = 10
 
 class BehaviorRobotSemanticActionEnv(iGibsonSemanticActionEnv):
-    ROBOT_DISTANCE_THRESHOLD = 0.9 * behavior_robot.HAND_DISTANCE_THRESHOLD # TODO: fix this more elegantly
+    ROBOT_DISTANCE_THRESHOLD = behavior_robot.HAND_DISTANCE_THRESHOLD # actually it's just not needed anymore as we don't need the object to be really near to be grasped
     arm = 'right_hand'
     
     def close(self, container_obj_name): 
@@ -23,12 +23,12 @@ class BehaviorRobotSemanticActionEnv(iGibsonSemanticActionEnv):
     def place_on_top(self, trg_obj_name, container_obj_name): 
         pass
 
-    def _reach_and_grasp(self, trg_obj, object_direction, hand_orn, reach=False, reach_offset=0.05):
+    def _reach_and_grasp(self, trg_obj, object_direction, grasp_orn, reach=False, reach_offset=0.05):
         if reach:
             target_pos = trg_obj.get_position() - reach_offset * object_direction
 
             # TODO: add this method to the class
-            #for _ in controller._move_hand((target_pos, hand_orn), stop_on_contact=True):
+            #for _ in controller._move_hand((target_pos, grasp_orn), stop_on_contact=True):
             #    yield _  # Executes planned motion until contact
     
         # Contact happened — now grasp!

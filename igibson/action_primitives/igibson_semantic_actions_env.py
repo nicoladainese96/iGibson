@@ -80,7 +80,7 @@ class iGibsonSemanticActionEnv(ABC):
     def _get_obj_in_hand(self): pass
 
     @abstractmethod
-    def _reach_and_grasp(trg_obj, object_direction, hand_orn): pass
+    def _reach_and_grasp(trg_obj, object_direction, grasp_orn): pass
 
     @abstractmethod
     def _get_distance_from_robot(self, position): pass
@@ -168,8 +168,8 @@ class iGibsonSemanticActionEnv(ABC):
         image, symbolic_state = self._finish_action()
         return success, image, symbolic_state
 
-    def _settle_physics(self, *args):
-        settle_physics(self.env, *args)
+    def _settle_physics(self, *args, **kwargs):
+        settle_physics(self.env, *args, **kwargs)
         
     def _finish_action(self, do_physics_steps=False, steps=2):
         if do_physics_steps:
