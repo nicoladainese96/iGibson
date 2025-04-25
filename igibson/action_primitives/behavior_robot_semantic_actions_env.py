@@ -8,10 +8,9 @@ from igibson.robots.behavior_robot import DEFAULT_BODY_OFFSET_FROM_FLOOR, Behavi
 from igibson.robots import BaseRobot, behavior_robot
 from igibson.utils.grasp_planning_utils import get_grasp_poses_for_object
 
-MAX_STEPS_FOR_GRASP_OR_RELEASE = 10
-
 class BehaviorRobotSemanticActionEnv(iGibsonSemanticActionEnv):
     ROBOT_DISTANCE_THRESHOLD = behavior_robot.HAND_DISTANCE_THRESHOLD # actually it's just not needed anymore as we don't need the object to be really near to be grasped
+    DEFAULT_BODY_OFFSET_FROM_FLOOR = DEFAULT_BODY_OFFSET_FROM_FLOOR # make it a class attribute
     arm = 'right_hand'
     
     def close(self, container_obj_name): 
@@ -36,8 +35,8 @@ class BehaviorRobotSemanticActionEnv(iGibsonSemanticActionEnv):
 
     def _execute_grasp(self):
         action = np.zeros(self.robot.action_dim)
-        action[self.robot.controller_action_idx["gripper_right_hand"]] = -1.0 # is this the max we can close it?
-        for _ in range(MAX_STEPS_FOR_GRASP_OR_RELEASE):
+        action[self.robot.controller_action_idx["gripper_right_hand"]] = -1.0 # fix this
+        for _ in range(self.MAX_STEPS_FOR_GRASP_OR_RELEASE):
             yield action
 
         # Do nothing for a bit so that AG can trigger. - this was in the original code, but I don't get what it's the purpose of it
@@ -45,24 +44,19 @@ class BehaviorRobotSemanticActionEnv(iGibsonSemanticActionEnv):
         #    yield np.zeros(self.robot.action_dim)
 
     def _get_obj_in_hand(self):
-        obj_in_hand_id = self.robot._ag_obj_in_hand["right_hand"]  
+        obj_in_hand_id = self.robot._ag_obj_in_hand[self.arm] #["right_hand"]  
         obj_in_hand = self.scene.objects_by_id[obj_in_hand_id] if obj_in_hand_id is not None else None
         return obj_in_hand
         
     def _move_gripper_to_pose(self, pose): 
         # Teleport right hand in right pose - TODO: add assisted/sticky grip to Behavior Robot at initialization
-        self.robot._parts["right_hand"].set_position_orientation(pose[0], pose[1]) # no idea how else to do that
+        self.robot._parts[self.arm].set_position_orientation(pose[0], pose[1]) # no idea how else to do that
 
     def _get_grasp_pose_for_object(self, trg_obj, robot_pos, **kwargs): 
         grasp_poses = get_grasp_poses_for_object(self.robot, trg_obj, force_allow_any_extent=False)
         grasp_pose, object_direction = self.pick_closest_pose(robot_pos, grasp_poses)
         return grasp_pose, object_direction
         
-    def _get_robot_pose_from_2d_pose(self, pose_2d):
-        pos = np.array([pose_2d[0], pose_2d[1], DEFAULT_BODY_OFFSET_FROM_FLOOR])
-        orn = p.getQuaternionFromEuler([0, 0, pose_2d[2]])
-        return pos, orn
-
     def _get_distance_from_robot(self, pos):
         shoulder_pos_in_base_frame = np.array(
             self.robot.links["%s_shoulder" % self.arm].get_local_position_orientation()[0]

@@ -21,7 +21,7 @@ def settle_physics(env, steps = None):
     for _ in range(steps):
         s.step()
         
-def check_collision_two_bodies(obj1, obj2, tol=1e-3):
+def check_collision_two_bodies(obj1, obj2, tol=1e-2):
     obj_ids1 = obj1.get_body_ids()
     obj_ids2 = obj2.get_body_ids()
 
@@ -40,7 +40,7 @@ def check_collision_two_bodies(obj1, obj2, tol=1e-3):
     
     return False
 
-def check_collision_one_body(obj1, tol=1e-3):
+def check_collision_one_body(obj1, tol=1e-2):
     obj_ids1 = obj1.get_body_ids()
 
     for obj_id1 in obj_ids1:
@@ -62,12 +62,12 @@ def get_task_objects(env):
                                   if name.split('.')[0] not in ['agent', 'floor']]
     return filtered_object_names_list
 
-def print_status_within_container(env, container_obj, max_distance_from_shoulder=0.9):
-    filtered_object_names_list = get_task_objects(env)
-    controller = get_controller(env)
+def print_status_within_container(sim_env, container_obj, max_distance_from_shoulder=0.9):
+    filtered_object_names_list = get_task_objects(sim_env.env)
+    #controller = get_controller(env)
     
     for name in filtered_object_names_list:
-        obj2 = env.task.object_scope[name]
+        obj2 = sim_env.env.task.object_scope[name]
         is_inside = obj2.states[object_states.inside.Inside].get_value(container_obj)
     
         if is_inside:
@@ -79,13 +79,13 @@ def print_status_within_container(env, container_obj, max_distance_from_shoulder
             else:
                 print(f"{name} is NOT colliding with any object")
                 
-            is_visible = obj2.states[object_states.IsVisible].get_value(env=env)
+            is_visible = obj2.states[object_states.IsVisible].get_value(env=sim_env.env)
             pixel_count = obj2.states[object_states.VisiblePixelCountFromRobot].get_value()
             print(f'{name} is visible: {is_visible} - Pixels visible: {pixel_count}')
 
-            is_near = controller._get_dist_from_point_to_shoulder(obj2.get_position()) < max_distance_from_shoulder
+            is_near = sim_env._get_distance_from_robot(obj2.get_position()) < max_distance_from_shoulder
             print(f'{name} is near: {is_near}')
-            print(f'Distance from shoulder: {controller._get_dist_from_point_to_shoulder(obj2.get_position()):.3f}')
+            print(f'Distance from shoulder: {sim_env._get_distance_from_robot(obj2.get_position()):.3f}')
         
 def get_names_of_visible_obj_inside(env, container_obj):
     filtered_object_names_list = get_task_objects(env)
@@ -121,7 +121,7 @@ def get_names_of_visible_obj_inside(env, container_obj):
         print("No visible object inside!")
         return None, None
 
-def open_or_close(env, container_obj):
+def open_or_close(sim_env, container_obj): # Not used anywhere so far
     state_before_action = p.saveState()
     print(f"{container_obj.bddl_object_scope} is open: {container_obj.states[object_states.Open].get_value()}")
     
@@ -135,12 +135,12 @@ def open_or_close(env, container_obj):
     state = container_obj.dump_state()
     container_obj.load_state(state)
         
-    settle_physics(env)
+    sim_env._settle_physics()
 
     print(f"{container_obj.bddl_object_scope} is open: {container_obj.states[object_states.Open].get_value()}")
     return state_before_action, [container_obj]
     
-def open_container(env, container_obj):
+def open_container(sim_env, container_obj):
     state_before_action = p.saveState()
     print(f"{container_obj.bddl_object_scope} is open: {container_obj.states[object_states.Open].get_value()}")
     
@@ -151,16 +151,16 @@ def open_container(env, container_obj):
         state = container_obj.dump_state()
         container_obj.load_state(state)
             
-        settle_physics(env)
+        sim_env._settle_physics()
 
     print(f"{container_obj.bddl_object_scope} is open: {container_obj.states[object_states.Open].get_value()}")
     return state_before_action, [container_obj]
 
-def reset_state(env, state_before, list_of_obj_to_awake):
+def reset_state(sim_env, state_before, list_of_obj_to_awake):
     restoreState(state_before)
     for obj in list_of_obj_to_awake:
         obj.force_wakeup()
-    settle_physics(env)
+    sim_env._settle_physics()
 
 def sample_point_in_container(container_obj):
     from igibson.object_states.utils import get_center_extent
@@ -179,7 +179,7 @@ def sample_point_in_container(container_obj):
     return point
 
 def open_and_make_all_obj_visible(
-    env,
+    sim_env,
     container_obj,
     outer_attempts=5, 
     inner_attempts=300, 
@@ -191,14 +191,14 @@ def open_and_make_all_obj_visible(
     assert container_obj.states[object_states.Open].get_value() == False, "Container should be closed to use this action!"
 
     # Define controller - used to compute distances from robot shoulder - could be streamlined further as the full controller is not needed
-    controller = get_controller(env)
+    #controller = get_controller(env)
     
     # Save original state - before being open
     original_container_state = p.saveState()
     objects_to_wake = []
     
     # Get list of objects inside the container_obj
-    names, objects = get_objects_inside(env, container_obj)
+    names, objects = get_objects_inside(sim_env.env, container_obj)
 
     for i in range(outer_attempts):
         if i > 0:
@@ -206,16 +206,16 @@ def open_and_make_all_obj_visible(
             restoreState(original_container_state)
             for obj in objects_to_wake:
                 obj.force_wakeup()
-            settle_physics(env, steps=2) # no need to have much steps here
+            sim_env._settle_physics(steps=2) # no need to have much steps here
 
         if debug:
-            render_utils.render_frame(env, show=True, save=True, name=f'debug-before-opening-{i}')
+            render_utils.render_frame(sim_env.env, show=True, save=True, name=f'debug-before-opening-{i}')
             
         # (Re-)Open container to obtain a new configuration 
-        state_before_action, objects_to_wake = open_container(env, container_obj)
+        state_before_action, objects_to_wake = open_container(sim_env, container_obj)
 
         if debug:
-            render_utils.render_frame(env, show=True, save=True, name=f'debug-after-opening-{i}')
+            render_utils.render_frame(sim_env.env, show=True, save=True, name=f'debug-after-opening-{i}')
 
         objects_positioned = []
         
@@ -224,7 +224,7 @@ def open_and_make_all_obj_visible(
             if debug: print(f"Making visible {name}")
             
             success, info = make_visible(
-                env, controller, trg_obj, container_obj, objects_positioned, 
+                sim_env, trg_obj, container_obj, objects_positioned, 
                 sampling_budget=inner_attempts, 
                 physics_steps=physics_steps, 
                 physics_steps_extra=physics_steps_extra, 
@@ -235,28 +235,28 @@ def open_and_make_all_obj_visible(
                 print(info)
 
                 # Print an update on all states of the objects involved
-                print_status_within_container(env, container_obj)
+                print_status_within_container(sim_env, container_obj)
             
             if success:
                 objects_positioned.append(trg_obj) # Used to enforce more stingent constraints on the next samples
                 if debug:
-                    render_utils.render_frame_with_trg_obj(env, trg_obj, show=True, save=True, add_bbox=True, name=f'after-rearranging-{name}-attempt{i}')
+                    render_utils.render_frame_with_trg_obj(sim_env.env, trg_obj, show=True, save=True, add_bbox=True, name=f'after-rearranging-{name}-attempt{i}')
             else:
                 # If not successful, assume that the configuration of free visible space in the container is not enough to relocate the trg_obj
                 # -> better sample a new one
                 break
 
         # If all objects are visible, near (reachable) and inside the container: no need to do further attempts 
-        all_visible = np.all([trg_obj.states[object_states.IsVisible].get_value(env=env) for trg_obj in objects])
+        all_visible = np.all([trg_obj.states[object_states.IsVisible].get_value(env=sim_env.env) for trg_obj in objects])
         all_inside = np.all([trg_obj.states[object_states.inside.Inside].get_value(container_obj) for trg_obj in objects])
-        all_near = np.all([controller._get_dist_from_point_to_shoulder(trg_obj.get_position()) < max_distance_from_shoulder for trg_obj in objects])
+        all_near = np.all([sim_env._get_distance_from_robot(trg_obj.get_position()) < max_distance_from_shoulder for trg_obj in objects])
 
         if debug:
             for name, trg_obj in zip(names, objects):
-                print(f"{name} IsVisible: ", trg_obj.states[object_states.IsVisible].get_value(env=env))
+                print(f"{name} IsVisible: ", trg_obj.states[object_states.IsVisible].get_value(env=sim_env.env))
                 print(f"{name} IsInside: ", trg_obj.states[object_states.inside.Inside].get_value(container_obj))
-                print(f"{name} IsNear: ", controller._get_dist_from_point_to_shoulder(trg_obj.get_position()) < max_distance_from_shoulder)
-                print(f'Distance from shoulder: {controller._get_dist_from_point_to_shoulder(trg_obj.get_position()):.3f}')
+                print(f"{name} IsNear: ", sim_env._get_distance_from_robot(trg_obj.get_position()) < max_distance_from_shoulder)
+                print(f'Distance from shoulder: {sim_env._get_distance_from_robot(trg_obj.get_position()):.3f}')
                 
             print(f"all_visible: {all_visible} - all_inside: {all_inside} - all_near: {all_near}")
             
@@ -267,15 +267,15 @@ def open_and_make_all_obj_visible(
     restoreState(original_container_state)
     for obj in objects_to_wake:
         obj.force_wakeup()
-    settle_physics(env, steps=2) # no need to have much steps here
+    sim_env._settle_physics(steps=2) # no need to have much steps here
 
     return False
 
-def all_conditions_satisfied(env, controller, trg_obj, container_obj, objects_positioned, max_distance):
+def all_conditions_satisfied(sim_env, trg_obj, container_obj, objects_positioned, max_distance):
     """
     Efficient check for all 4 conditions needed for the sample to be accepted. Check them one by one from the fastest and return False at the first False instance.
     """
-    is_visible = trg_obj.states[object_states.IsVisible].get_value(env=env)
+    is_visible = trg_obj.states[object_states.IsVisible].get_value(env=sim_env.env)
     if not is_visible:
         return False
     else:
@@ -287,17 +287,17 @@ def all_conditions_satisfied(env, controller, trg_obj, container_obj, objects_po
             if has_collisions:
                 return False
             else:
-                is_near = controller._get_dist_from_point_to_shoulder(trg_obj.get_position()) < max_distance
+                is_near = sim_env._get_distance_from_robot(trg_obj.get_position()) < max_distance
                 if not is_near:
                     return False
                 else:
-                    all_visible = np.all([obj_already_visible.states[object_states.IsVisible].get_value(env=env) for obj_already_visible in objects_positioned])
+                    all_visible = np.all([obj_already_visible.states[object_states.IsVisible].get_value(env=sim_env.env) for obj_already_visible in objects_positioned])
                     if all_visible:
                         return True
                     else:
                         return False
         
-def make_visible(env, controller, trg_obj, container_obj, objects_positioned=[], sampling_budget = 100, physics_steps=5, physics_steps_extra=15, max_distance=0.8):
+def make_visible(sim_env, trg_obj, container_obj, objects_positioned=[], sampling_budget = 100, physics_steps=5, physics_steps_extra=15, max_distance=0.8):
     # 1. Check that container_obj is open, if not, raise an error (return success = False plus some info)
     container_is_open = container_obj.states[object_states.Open].get_value()
     
@@ -308,8 +308,8 @@ def make_visible(env, controller, trg_obj, container_obj, objects_positioned=[],
         
     # Get initial predicates for the target object - give for granted that has_collisions = False
     is_inside = trg_obj.states[object_states.inside.Inside].get_value(container_obj)
-    is_visible = trg_obj.states[object_states.IsVisible].get_value(env=env)
-    is_near = controller._get_dist_from_point_to_shoulder(trg_obj.get_position()) < max_distance
+    is_visible = trg_obj.states[object_states.IsVisible].get_value(env=sim_env.env)
+    is_near = sim_env._get_distance_from_robot(trg_obj.get_position()) < max_distance
     
     if is_inside and is_visible and is_near:
         # 2. If trg_obj is inside the container and is visible, return success = True plus some info
@@ -337,20 +337,20 @@ def make_visible(env, controller, trg_obj, container_obj, objects_positioned=[],
         # Sample 3d point inside the container volume
         candidate_pos = sample_point_in_container(container_obj)
 
-        is_near = controller._get_dist_from_point_to_shoulder(candidate_pos) < max_distance 
+        is_near = sim_env._get_distance_from_robot(candidate_pos) < max_distance 
         if is_near:
                 
             # Set the object position to the candidate_pos
             trg_obj.set_position(candidate_pos)
             
             # Do 'physics_steps' steps of the simulator and then check for all conditions - this is the heaviest part
-            settle_physics(env, physics_steps)
+            sim_env._settle_physics(physics_steps)
             
-            if all_conditions_satisfied(env, controller, trg_obj, container_obj, objects_positioned, max_distance):
+            if all_conditions_satisfied(sim_env, trg_obj, container_obj, objects_positioned, max_distance):
                 # For promising candidates, check for longer times
-                settle_physics(env, physics_steps_extra)
+                sim_env._settle_physics(physics_steps_extra)
 
-                if all_conditions_satisfied(env, controller, trg_obj, container_obj, objects_positioned, max_distance):
+                if all_conditions_satisfied(sim_env, trg_obj, container_obj, objects_positioned, max_distance):
                     break
         
         # If the budget ends without success, restore initial object position, return success = False and some info
@@ -359,7 +359,7 @@ def make_visible(env, controller, trg_obj, container_obj, objects_positioned=[],
             trg_obj.set_position(original_position)
             restoreState(pb_initial_state)
             # Maybe it's not needed here
-            #settle_physics(env, physics_steps)  # Pass physics_steps consistently
+            #sim_env._settle_physics(physics_steps)  # Pass physics_steps consistently
             info = 'Failed due to exhausting the budget'
             return success, info
             

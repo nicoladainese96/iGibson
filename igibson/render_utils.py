@@ -35,6 +35,7 @@ def set_camera_look_ahead(env,
                           forward_downward_dir=None,
                           up_dir=None,
                           camera_pos_offset=None,
+                          camera_height=1.2,
                           apply_q_rotation=True
                          ):
     """
@@ -56,10 +57,12 @@ def set_camera_look_ahead(env,
     if apply_q_rotation:
         # Apply rotations to see all directions in the frame of the robot
         camera_pos = robot_pos + q.rotate(camera_pos_offset) # Slightly above the robot's center
+        camera_pos[2] = camera_height
         forward_downward_direction = q.rotate(forward_downward_dir) # Forward wrt the robot's frame of reference 
         up_direction = up_dir # up is up no matter the frame of reference, unless the robot is doing something weird
     else:
         camera_pos = robot_pos + camera_pos_offset
+        camera_pos[2] = camera_height
         forward_downward_direction = forward_downward_dir
         up_direction = up_dir
 
