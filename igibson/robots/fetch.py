@@ -36,7 +36,7 @@ class Fetch(ManipulationRobot, TwoWheelRobot, ActiveCameraRobot):
         reset_joint_pos=None,
         rigid_trunk=False,
         default_trunk_offset=0.365,
-        default_arm_pose="vertical",
+        default_arm_pose="vertical",#"diagonal30",
         **kwargs,
     ):
         """
@@ -55,6 +55,7 @@ class Fetch(ManipulationRobot, TwoWheelRobot, ActiveCameraRobot):
         self.default_trunk_offset = default_trunk_offset
         assert_valid_key(key=default_arm_pose, valid_keys=DEFAULT_ARM_POSES, name="default_arm_pose")
         self.default_arm_pose = default_arm_pose
+        # should we rename self.default_arm = 'right_hand' or would it mess up everything?
 
         # Parse reset joint pos if specifying special string
         if isinstance(reset_joint_pos, str):

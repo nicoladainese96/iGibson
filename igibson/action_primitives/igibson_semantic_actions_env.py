@@ -34,7 +34,9 @@ class UndoableContext(object):
         
 class iGibsonSemanticActionEnv(ABC):
     ROBOT_DISTANCE_THRESHOLD = None
-
+    DEFAULT_BODY_OFFSET_FROM_FLOOR = None
+    MAX_STEPS_FOR_GRASP_OR_RELEASE = 10
+    
     def __init__(self, task, scene_id, verbose=False):
         env_config = get_env_config()
         env_config["task"] = task
@@ -86,9 +88,6 @@ class iGibsonSemanticActionEnv(ABC):
     def _get_distance_from_robot(self, position): pass
 
     @abstractmethod
-    def _get_robot_pose_from_2d_pose(self, pose_2d): pass
-
-    @abstractmethod
     def _detect_robot_collision(self): pass
 
     def apply_action(self, action):
@@ -113,7 +112,7 @@ class iGibsonSemanticActionEnv(ABC):
         container_obj = self.env.task.object_scope[obj_name] 
         
         success = open_and_make_all_obj_visible(
-            self.env,
+            self,
             container_obj,
             max_distance_from_shoulder=self.ROBOT_DISTANCE_THRESHOLD,
             debug=self.verbose,
@@ -151,7 +150,7 @@ class iGibsonSemanticActionEnv(ABC):
         
         action_generator = self._reach_and_grasp(trg_obj, object_direction, grasp_orn=grasp_pose[1])
         for i, action in enumerate(action_generator):
-            if self.verbose: print(f"Step {i} - object in hand: {self._get_obj_in_hand()}")
+            if self.verbose: print(f"Step {i} - object in hand: {self._get_obj_in_hand()} - Robot is gripping the candidate object: {self.robot.is_grasping(candidate_obj=trg_obj)}")
             trg_obj.set_position(trg_obj_pos) # keep the object still, while trying to grasp it - not sure it's needed
             self.robot.apply_action(action)
             
@@ -182,7 +181,12 @@ class iGibsonSemanticActionEnv(ABC):
     def _get_symbolic_state(self):
         # TODO: implement it in such a way that it returns all the predicates needed for the ground-truth planner/state
         return None
-    
+
+    def _get_robot_pose_from_2d_pose(self, pose_2d):
+        pos = np.array([pose_2d[0], pose_2d[1], self.DEFAULT_BODY_OFFSET_FROM_FLOOR])
+        orn = p.getQuaternionFromEuler([0, 0, pose_2d[2]])
+        return pos, orn
+        
     def _sample_pose_near_object(self, obj):
         object_center, orientation = obj.get_position_orientation()
     
@@ -274,21 +278,43 @@ class iGibsonSemanticActionEnv(ABC):
         closest = np.argmin(distances)
         return poses[closest]
 
+    # Old function, doesn't work for FetchRobot, which collides with the floor
+    #@staticmethod
+    #def _detect_collision(body, obj_in_hand=None):
+    #    collision = []
+    #    obj_in_hand_id = None
+    #    if obj_in_hand is not None:
+    #        [obj_in_hand_id] = obj_in_hand.get_body_ids()
+
+    #    for body_id in range(p.getNumBodies()):
+    #        if body_id == body or body_id == obj_in_hand_id:
+    #            continue
+    #        closest_points = p.getClosestPoints(body, body_id, distance=0.01)
+    #        if len(closest_points) > 0:
+    #            collision.append(body_id)
+    #            break
+    #    return collision
+
     @staticmethod
-    def _detect_collision(body, obj_in_hand=None):
+    def _detect_collision(body_id, obj_in_hand=None, tol=1e-2): # 1 cm of tolerance is quite high
         collision = []
         obj_in_hand_id = None
         if obj_in_hand is not None:
             [obj_in_hand_id] = obj_in_hand.get_body_ids()
-        for body_id in range(p.getNumBodies()):
-            if body_id == body or body_id == obj_in_hand_id:
-                continue
-            closest_points = p.getClosestPoints(body, body_id, distance=0.01)
-            if len(closest_points) > 0:
-                collision.append(body_id)
-                break
-        return collision
     
+        for other_body_id in range(p.getNumBodies()):
+            if other_body_id == body_id or other_body_id == obj_in_hand_id:
+                continue
+    
+            contact_points = p.getContactPoints(body_id, other_body_id)
+            for contact in contact_points:
+                contact_distance = contact[8]  # 9th element is contactDistance
+                if contact_distance < 0 and abs(contact_distance) > tol:
+                    collision.append(other_body_id)
+                    break  # Found a meaningful collision, move on
+    
+        return collision
+
 
     
         
