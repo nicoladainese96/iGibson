@@ -6,7 +6,6 @@ import pybullet as p
 
 from igibson.robots.behavior_robot import DEFAULT_BODY_OFFSET_FROM_FLOOR, BehaviorRobot
 from igibson.robots import BaseRobot, behavior_robot
-from igibson.utils.grasp_planning_utils import get_grasp_poses_for_object
 
 class BehaviorRobotSemanticActionEnv(iGibsonSemanticActionEnv):
     ROBOT_DISTANCE_THRESHOLD = behavior_robot.HAND_DISTANCE_THRESHOLD # actually it's just not needed anymore as we don't need the object to be really near to be grasped
@@ -51,11 +50,6 @@ class BehaviorRobotSemanticActionEnv(iGibsonSemanticActionEnv):
     def _move_gripper_to_pose(self, pose): 
         # Teleport right hand in right pose - TODO: add assisted/sticky grip to Behavior Robot at initialization
         self.robot._parts[self.arm].set_position_orientation(pose[0], pose[1]) # no idea how else to do that
-
-    def _get_grasp_pose_for_object(self, trg_obj, robot_pos, **kwargs): 
-        grasp_poses = get_grasp_poses_for_object(self.robot, trg_obj, force_allow_any_extent=False)
-        grasp_pose, object_direction = self.pick_closest_pose(robot_pos, grasp_poses)
-        return grasp_pose, object_direction
         
     def _get_distance_from_robot(self, pos):
         shoulder_pos_in_base_frame = np.array(

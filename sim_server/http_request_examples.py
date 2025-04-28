@@ -6,7 +6,7 @@ import io
 import time
 
 # Base URL for your API
-base_url = "http://dgx26:8000"  # Change node name and port as needed
+base_url = "http://gpu36:8000"  # Change node name and port as needed
 
 # Test the reset endpoint
 def test_reset(task, scene_id):
