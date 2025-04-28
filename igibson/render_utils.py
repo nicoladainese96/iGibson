@@ -155,7 +155,7 @@ def render_frame_with_trg_obj(env,
         image = draw_contour_points(image, contour_points_uv)
     
     if add_bbox:
-        bbox_vertices_uv = get_bbox_vertices_uv(env, obj)
+        bbox_vertices_uv = get_bbox_vertices_uv_coord(env, obj)
         image = draw_3d_bbox(image, bbox_vertices_uv)
         
     if show:
@@ -167,12 +167,50 @@ def render_frame_with_trg_obj(env,
         bbox_vertices_uv = np.stack([image.width - bbox_vertices_uv[:,0], bbox_vertices_uv[:,1]], axis=1)
         return bbox_vertices_uv
 
+def render_frame_with_grasp_poses(
+    env, grasp_poses, show=True, save=False, path='images', name='tmp', **kwargs
+):
+    set_camera_look_ahead(env, **kwargs)
+    image = get_image_from_camera(env.simulator) # this takes 99% of the time of the function
+
+    # Get uv coordinates of grasp poses
+    grasp_points_uv = get_grasp_points_uv(env, grasp_poses)
+    
+    # Draw them over the image reusing draw_contour_points
+    image = draw_contour_points(image, grasp_points_uv)
+    
+    if show:
+        image.show()
+    if save:
+        image.save(os.path.join(path, name+'.jpg'), "JPEG")
+
+def get_grasp_points_uv(env, grasp_poses):
+    s = env.simulator
+    
+    # Sample contour points
+    grasp_positions = [grasp_pose[0] for grasp_pose in grasp_poses] # each entry has (pos, orn)
+ 
+    # Express in camera frame of reference
+    objects_pos_camera_frame = [s.renderer.transform_point(obj_pos) for obj_pos in grasp_positions]
+    objects_pos_camera_frame = np.stack(objects_pos_camera_frame)
+
+    # Project to uv plane
+    K = s.renderer.get_intrinsics()
+    uvw_column_vectors = np.dot(K, objects_pos_camera_frame.T)
+    
+    # Normalise
+    uv_prime_column_vectors = uvw_column_vectors[:2]/uvw_column_vectors[2:]
+    contour_points_uv = uv_prime_column_vectors.T
+    
+    return contour_points_uv
+
+
 def get_bbox_vertices_uv(env, obj, **kwargs):
     # Getting the bounding box vertices does not need rendering the whole image, so this function is used to provide 
     # the bbox when it's needed exclusively and efficiently for the isVisible predicate
     
     set_camera_look_ahead(env, **kwargs)
-    bbox_vertices_uv = get_bbox_vertices_uv(env, obj)
+    bbox_vertices_uv = get_bbox_vertices_uv_coord(env, obj)
     # Change u in image width - u for completeness
     bbox_vertices_uv = np.stack([env.config['image_width'] - bbox_vertices_uv[:,0], bbox_vertices_uv[:,1]], axis=1)
     return bbox_vertices_uv
@@ -235,7 +273,7 @@ def get_contour_points_uv(env, obj, n_points = 1000):
     
     return contour_points_uv
 
-def get_bbox_vertices_uv(env, obj):
+def get_bbox_vertices_uv_coord(env, obj):
     # wf = world frame, cf = camera frame
     s = env.simulator
 

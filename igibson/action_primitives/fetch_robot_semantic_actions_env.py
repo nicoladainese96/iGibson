@@ -9,13 +9,15 @@
 
 from .igibson_semantic_actions_env import iGibsonSemanticActionEnv
 
+import random
 import numpy as np
 import pybullet as p
 
 from igibson.envs.igibson_env import iGibsonEnv
-from igibson.utils.grasp_planning_utils import get_grasp_poses_for_object
+from igibson.utils.grasp_planning_utils import get_grasp_poses_for_object_gripper
 
 from igibson.custom_utils import get_env_config
+import igibson.render_utils as render_utils
 
 class FetchRobotSemanticActionEnv(iGibsonSemanticActionEnv):
     ROBOT_DISTANCE_THRESHOLD = 1.2 # just hardcoded for now
@@ -31,6 +33,7 @@ class FetchRobotSemanticActionEnv(iGibsonSemanticActionEnv):
         env_config["robot"]["name"] = "Fetch" # this should init Fetch instead of Behavior robot
         robot_name = env_config["robot"]["name"] # Keep this in memory as it's removed from the config when we init iGibson
 
+        env_config["robot"]["grasping_mode"] = "sticky" #"assisted"
         self.env = iGibsonEnv(
                 config_file=env_config,
                 mode="headless",
@@ -46,6 +49,8 @@ class FetchRobotSemanticActionEnv(iGibsonSemanticActionEnv):
         self.task = task
         self.scene = self.env.scene
         self.robot = self.env.robots[0]
+        self.robot_id = self.robot._body_ids[0]
+        self.gripper_link_idx = self.robot._links['gripper_link'].link_id
         self.verbose = verbose
 
     def close(self, container_obj_name): 
@@ -57,15 +62,79 @@ class FetchRobotSemanticActionEnv(iGibsonSemanticActionEnv):
     def place_on_top(self, trg_obj_name, container_obj_name): 
         pass
 
-    # if this works fine, move to super class
-    def _get_grasp_pose_for_object(self, trg_obj, robot_pos, **kwargs): 
-        grasp_poses = get_grasp_poses_for_object(self.robot, trg_obj, force_allow_any_extent=False)
-        grasp_pose, object_direction = self.pick_closest_pose(robot_pos, grasp_poses)
-        return grasp_pose, object_direction
+    # debug this
+    def _move_gripper_to_pose(self, pose):
+        joint_pos = self._solve_ik(pose) 
+        if joint_pos is None:
+            raise ValueError("IK failed to find a solution for pose: {}".format(pose))
+        
+        # Print gripper pose before
+        if self.verbose: 
+            self._check_gripper_in_pose(pose, name='before')
+        
+        self.robot.set_joint_positions(joint_pos)
 
-    # if this works fine, move to super class
-    def _move_gripper_to_pose(self, pose): 
-        self.robot._parts[self.arm].set_position_orientation(pose[0], pose[1]) # can we even do this?
+        # Print gripper pose after
+        if self.verbose: 
+            self._check_gripper_in_pose(pose, name='after set_join_positions')
+
+    def _check_gripper_in_pose(self, trg_pose, name, pos_tol=1e-2, orn_tol=1e-2):
+
+        target_pos, target_orn = trg_pose
+        
+        # Get actual gripper pose
+        gripper_state = p.getLinkState(self.robot_id, self.gripper_link_idx)
+        actual_pos = gripper_state[4]  # position of COM of link
+        actual_orn = gripper_state[5]  # orientation as quaternion
+        
+        # Compare to desired
+        pos_error = np.linalg.norm(np.array(actual_pos) - np.array(target_pos))
+        orn_error = quaternion_distance(actual_orn, target_orn)
+        
+        # Set your own tolerances
+        success = pos_error < pos_tol and orn_error < orn_tol
+        
+        # Print debug info
+        print(f"\n==== Gripper Pose Check: {name} ====")
+        print(f"Target Position     : {np.round(target_pos, 4)}")
+        print(f"Actual Position     : {np.round(actual_pos, 4)}")
+        print(f"Position Error      : {pos_error:.6f} (tol={pos_tol})")
+    
+        print(f"Target Orientation  : {np.round(target_orn, 4)}")
+        print(f"Actual Orientation  : {np.round(actual_orn, 4)}")
+        print(f"Orientation Error   : {orn_error:.6f} (tol={orn_tol})")
+
+    
+    def _solve_ik(self, pose):
+        """
+        Return joint positions (14,) that move the gripper to `pose`, using IK.
+        """
+        position, orientation = pose
+
+        # Consider only joints between body and end effector 
+        indexes = self.robot.arm_control_idx[self.robot.default_arm]
+
+        # Get joint ranges between lower and upper values
+        joint_ranges = np.array([
+            upper - lower
+            for lower, upper in zip(self.robot.joint_lower_limits, self.robot.joint_upper_limits)
+        ])
+
+        joint_angles = p.calculateInverseKinematics(
+            bodyUniqueId=self.robot_id, #self.robot.robot_id does not exist
+            endEffectorLinkIndex=self.gripper_link_idx,
+            targetPosition=position,
+            targetOrientation=orientation,
+            lowerLimits=self.robot.joint_lower_limits[indexes],
+            upperLimits=self.robot.joint_upper_limits[indexes],
+            jointRanges=joint_ranges[indexes],
+            restPoses=self.robot.untucked_default_joint_pos[indexes],
+            maxNumIterations=100,
+            residualThreshold=1e-4
+        )
+
+        return np.array(joint_angles)
+
 
     def _get_obj_in_hand(self): 
         obj_in_hand_id = self.robot._ag_obj_in_hand['0'] # this is the self.robot.default_arm for Fetch apparently
@@ -85,8 +154,7 @@ class FetchRobotSemanticActionEnv(iGibsonSemanticActionEnv):
         
     def _execute_grasp(self):
         action = np.zeros(self.robot.action_dim)
-        # The following command might require position controls ([0.001,0.001]) or velocity controls ([-1.0,-1.0]) - try both
-        action[self.robot.controller_action_idx[self.robot.default_arm]] = np.array([0.001,0.001]) # symmetric distance from the center of the gripper - for reference the open gripper has coord [0.05,0.05]
+        action[self.robot.controller_action_idx[f"gripper_{self.robot.default_arm}"]] = np.array([-1.0]) # seems to work
         for _ in range(self.MAX_STEPS_FOR_GRASP_OR_RELEASE):
             yield action
 
@@ -125,3 +193,29 @@ class FetchRobotSemanticActionEnv(iGibsonSemanticActionEnv):
         if self.verbose:
             print("End collision test.")
         return any_collision
+
+    def _get_grasp_pose_for_object(self, trg_obj, robot_pos, pick_closest=False, render=False, **kwargs): 
+        grasp_poses = get_grasp_poses_for_object_gripper(self.robot, trg_obj, force_allow_any_extent=False)
+
+        if render:
+            gps = [grasp_pose for (grasp_pose, obj_dir) in grasp_poses]
+            print(f"len(grasp_poses):{len(grasp_poses)}, len(gps):{len(gps)}, len(grasp_poses[0]):{len(grasp_poses[0])}, len(gps[0]):{len(gps[0])}")
+            render_utils.render_frame_with_grasp_poses(
+                    self.env, gps, show=True, save=True,
+                    name='grasp_poses'
+                )
+            
+        if pick_closest:
+            grasp_pose, object_direction = self.pick_closest_pose(robot_pos, grasp_poses)
+        else:
+            grasp_pose, object_direction = random.choice(grasp_poses)
+        return grasp_pose, object_direction
+        
+def quaternion_distance(q1, q2):
+    """Compute shortest angle between two quaternions, accounting for double covering."""
+    q1 = np.array(q1)
+    q2 = np.array(q2)
+    dot_product = np.abs(np.dot(q1, q2))  # Take abs to fix sign flip ambiguity
+    dot_product = np.clip(dot_product, -1.0, 1.0)
+    return 2 * np.arccos(dot_product)
+

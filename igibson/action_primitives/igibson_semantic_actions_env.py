@@ -11,6 +11,7 @@ from igibson.utils.utils import restoreState
 from igibson import object_states
 from igibson.object_states.utils import get_center_extent
 from igibson.action_primitives.action_primitive_set_base import ActionPrimitiveError
+from igibson.utils.grasp_planning_utils import get_grasp_poses_for_object
 
 from igibson.primitives_utils import open_and_make_all_obj_visible, settle_physics
 import igibson.render_utils as render_utils
@@ -45,6 +46,8 @@ class iGibsonSemanticActionEnv(ABC):
         env_config["instance_id"] = 0
         robot_name = env_config["robot"]["name"] # Keep this in memory as it's removed from the config when we init iGibson
 
+        # TODO: add grasping_mode="assisted" or "sticky" to be passed all the way to the robot 
+        env_config["robot"]["grasping_mode"] = "assisted"
         self.env = iGibsonEnv(
                 config_file=env_config,
                 mode="headless",
@@ -73,17 +76,17 @@ class iGibsonSemanticActionEnv(ABC):
     def place_on_top(self, trg_obj_name, container_obj_name): pass
         
     @abstractmethod
-    def _get_grasp_pose_for_object(self, trg_obj, robot_pos, **kwargs): pass
-        
-    @abstractmethod
     def _move_gripper_to_pose(self, pose): pass
 
     @abstractmethod
     def _get_obj_in_hand(self): pass
 
     @abstractmethod
-    def _reach_and_grasp(trg_obj, object_direction, grasp_orn): pass
+    def _reach_and_grasp(self, trg_obj, object_direction, grasp_orn): pass
 
+    @abstractmethod
+    def _execute_grasp(self): pass
+        
     @abstractmethod
     def _get_distance_from_robot(self, position): pass
 
@@ -121,6 +124,151 @@ class iGibsonSemanticActionEnv(ABC):
         image, symbolic_state = self._finish_action()
         return success, image, symbolic_state
 
+    # TODO: debug and double-check
+    def grasp(self, obj_name, forward_downward_dir=None, camera_offset=None, distance_from_camera=0.2, sample_budget=20):
+        """
+        Attempts to grasp an object by sampling up to `sample_budget` grasp poses.
+        Returns (success, image, symbolic_state).
+        """
+        trg_obj = self.env.task.object_scope[obj_name]
+    
+        # Get robot base position and orientation
+        robot_pos, quat_rot = render_utils.get_robot_pos_and_q_rotation(self.robot)
+        if self.verbose:
+            print(f"robot_pos: {robot_pos}, quaternion_pose: {quat_rot}")
+    
+        # Default directions
+        if forward_downward_dir is None:
+            forward_downward_dir = np.array([1, 0, -0.25])
+        if camera_offset is None:
+            camera_offset = np.array([0.1, 0.1, 1.2]) # z dimension is hardcoded
+
+        # Compute and set object position in front of robot
+        target_obj_pos = (
+            np.array([robot_pos[0], robot_pos[1], 0])
+            + quat_rot.rotate(camera_offset)
+            + quat_rot.rotate(forward_downward_dir) * distance_from_camera
+        )
+            
+        # Try multiple grasp attempts
+        last_image, last_state = None, None
+
+        # Save state of the environment for resets between attempts
+        robot_data = self.robot.dump_state()
+        env_state = p.saveState()
+
+        # For temporary debug - close the gripper and then revert the state
+        #if self.verbose:
+        #    max_steps = 10
+        #    for i, action in enumerate(self._execute_grasp()):
+        #        
+        #        # Grasp in the air
+        #        self.robot.apply_action(action)
+        #        self._settle_physics(steps=1)
+        #    
+        #        # Render
+        #        render_utils.render_frame_with_trg_obj(
+        #            self.env, trg_obj,
+        #            show=True, save=True,
+        #            name=f'grasping_check_{i}'
+        #        )
+        #        
+        #        # Exit at most after max_steps
+        #        if i+1 == max_steps:
+        #            break
+        #            
+        #    # Revert the state
+        #    self.robot.load_state(robot_data)
+        #    restoreState(env_state)
+        #    self._settle_physics(steps=1)
+            
+        for attempt in range(1, sample_budget + 1):
+            if self.verbose:
+                print(f"\n--- Grasp attempt {attempt}/{sample_budget} ---")
+
+            if attempt > 1:
+                # Always reset after every unsuccessful attempt - doesn't really seem to work that well
+                self.robot.load_state(robot_data)
+                restoreState(env_state)
+                self._settle_physics(steps=1)
+                
+            trg_obj.set_position(target_obj_pos) # is it needed here? I guess it's okay
+            if self.verbose:
+                print(f"Target object position: {target_obj_pos}")
+                render_utils.render_frame_with_trg_obj(
+                    self.env, trg_obj,
+                    show=True, save=True,
+                    add_bbox=True,
+                    name=f'object_to_grasp_t0_attempt{attempt}'
+                )
+
+            # Get grasp pose and direction
+            pick_closest = True if attempt == 1 else False
+            grasp_pose, obj_dir = self._get_grasp_pose_for_object(trg_obj, robot_pos, pick_closest=pick_closest, render=self.verbose)
+            if self.verbose:
+                print(f"grasp_pose: {grasp_pose} - object_direction: {obj_dir}")
+            
+            # Run one grasp trial
+            success, img, state = self._attempt_grasp_once(
+                trg_obj, target_obj_pos, grasp_pose, obj_dir,
+                forward_downward_dir, camera_offset,
+                distance_from_camera
+            )
+    
+            last_image, last_state = img, state
+            if success:
+                if self.verbose:
+                    print(f"Grasp succeeded on attempt {attempt}.")
+                return True, img, state
+            else:
+                if self.verbose:
+                    print(f"Grasp failed on attempt {attempt}, retrying next sample.")
+        # All attempts failed
+        if self.verbose:
+            print("All grasp attempts failed.")
+        return False, last_image, last_state
+    
+    
+    def _attempt_grasp_once(
+        self, trg_obj, target_obj_pos, grasp_pose, obj_dir,
+        forward_downward_dir, camera_offset, distance_from_camera, steps_obj_in_place=2
+    ):
+        """
+        Single grasp attempt: move gripper, reach, and grasp.
+        Returns (success, image, symbolic_state).
+        """
+    
+        # Move gripper close to the grasp pose without rendering
+        self._move_gripper_to_pose(grasp_pose)
+    
+        # Execute reach and grasp actions
+        for i, action in enumerate(self._reach_and_grasp(trg_obj, obj_dir, grasp_orn=grasp_pose[1])):
+            if self.verbose:
+                print(
+                    f"Step {i}: in_hand={self._get_obj_in_hand()} | "
+                    f"is_grasping={self.robot.is_grasping(candidate_obj=trg_obj)}" # this is shit
+                )
+            
+            if i < steps_obj_in_place:
+                # Keep object in place
+                trg_obj.set_position(target_obj_pos)
+            self.robot.apply_action(action)
+            self._settle_physics(steps=1)
+            # Only render final step if verbose
+            if self.verbose and i%2 == 0:
+                render_utils.render_frame_with_trg_obj(
+                    self.env, trg_obj, show=True, save=True,
+                    add_bbox=True, name=f'object_to_grasp_step{i}'
+                )
+    
+        # Check grasp success
+        success = (self._get_obj_in_hand() is trg_obj) # how is this _get_obj_in_hand computed in Fetch?
+        # Finish action and get outputs
+        image, symbolic_state = self._finish_action()
+        return success, image, symbolic_state
+
+    
+    """
     def grasp(self, obj_name, forward_downward_dir=None, camera_offset=None, distance_from_camera=0.2): 
         trg_obj = self.env.task.object_scope[obj_name] 
         
@@ -166,6 +314,7 @@ class iGibsonSemanticActionEnv(ABC):
 
         image, symbolic_state = self._finish_action()
         return success, image, symbolic_state
+        """
 
     def _settle_physics(self, *args, **kwargs):
         settle_physics(self.env, *args, **kwargs)
@@ -186,6 +335,23 @@ class iGibsonSemanticActionEnv(ABC):
         pos = np.array([pose_2d[0], pose_2d[1], self.DEFAULT_BODY_OFFSET_FROM_FLOOR])
         orn = p.getQuaternionFromEuler([0, 0, pose_2d[2]])
         return pos, orn
+
+    def _get_grasp_pose_for_object(self, trg_obj, robot_pos, pick_closest=False, render=False, **kwargs): 
+        grasp_poses = get_grasp_poses_for_object(self.robot, trg_obj, force_allow_any_extent=False)
+
+        if render:
+            gps = [grasp_pose for (grasp_pose, obj_dir) in grasp_poses]
+            print(f"len(grasp_poses):{len(grasp_poses)}, len(gps):{len(gps)}, len(grasp_poses[0]):{len(grasp_poses[0])}, len(gps[0]):{len(gps[0])}")
+            render_utils.render_frame_with_grasp_poses(
+                    self.env, gps, show=True, save=True,
+                    name='grasp_poses'
+                )
+            
+        if pick_closest:
+            grasp_pose, object_direction = self.pick_closest_pose(robot_pos, grasp_poses)
+        else:
+            grasp_pose, object_direction = random.choice(grasp_poses)
+        return grasp_pose, object_direction
         
     def _sample_pose_near_object(self, obj):
         object_center, orientation = obj.get_position_orientation()
