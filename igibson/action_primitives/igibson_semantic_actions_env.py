@@ -370,26 +370,28 @@ class iGibsonSemanticActionEnv(ABC):
             world_direction = np.array(world_direction)
     
             return position + distance * world_direction
-    
-        for _ in range(MAX_ATTEMPTS_FOR_SAMPLING_POSE_NEAR_OBJECT):
-            pos_on_obj = np.array(self._sample_position_on_aabb_face(obj))
-            obj_rooms = obj.in_rooms if obj.in_rooms else [self.scene.get_room_instance_by_point(pos_on_obj[:2])]
-    
-            yaw = np.random.uniform(-45, 45)
-            distance = np.random.uniform(0.4, 0.9)
-    
-            pose_2d = point_in_front_with_local_yaw(object_center, orientation, distance, yaw_offset_deg=yaw)
-            new_yaw = np.arctan2(object_center[1] - pose_2d[1], object_center[0] - pose_2d[0])
-            pose_2d[2] = new_yaw
-    
-            if not self._test_pose(pose_2d, obj, pos_on_obj=pos_on_obj):
-                continue
-    
-            return pose_2d
+
+        for yaw_range in [45, 60, 90]:
+            for _ in range(MAX_ATTEMPTS_FOR_SAMPLING_POSE_NEAR_OBJECT//3):
+                pos_on_obj = np.array(self._sample_position_on_aabb_face(obj))
+                obj_rooms = obj.in_rooms if obj.in_rooms else [self.scene.get_room_instance_by_point(pos_on_obj[:2])]
+        
+                yaw = np.random.uniform(-yaw_range, yaw_range)
+                distance = np.random.uniform(0.4, 0.9)
+        
+                pose_2d = point_in_front_with_local_yaw(object_center, orientation, distance, yaw_offset_deg=yaw)
+                new_yaw = np.arctan2(object_center[1] - pose_2d[1], object_center[0] - pose_2d[0])
+                pose_2d[2] = new_yaw
+        
+                if not self._test_pose(pose_2d, obj, pos_on_obj=pos_on_obj):
+                    continue
+        
+                return pose_2d
     
         raise ActionPrimitiveError(
             ActionPrimitiveError.Reason.SAMPLING_ERROR, "Could not find valid position near object."
         )
+
 
     def _test_pose(self, pose_2d, obj, pos_on_obj=None):
         with UndoableContext(self.robot):
