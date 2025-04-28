@@ -5,15 +5,16 @@ import numpy as np
 import pybullet as p
 from scipy.spatial.transform import Rotation
 from abc import ABC, abstractmethod
+from collections import defaultdict
 
 from igibson.envs.igibson_env import iGibsonEnv
 from igibson.utils.utils import restoreState
 from igibson import object_states
 from igibson.object_states.utils import get_center_extent
 from igibson.action_primitives.action_primitive_set_base import ActionPrimitiveError
-from igibson.utils.grasp_planning_utils import get_grasp_poses_for_object
+from igibson.utils.grasp_planning_utils import get_grasp_poses_for_object, GUARANTEED_GRASPABLE_WIDTH
 
-from igibson.primitives_utils import open_and_make_all_obj_visible, settle_physics
+from igibson.primitives_utils import open_and_make_all_obj_visible, settle_physics, get_task_objects
 import igibson.render_utils as render_utils
 from igibson.custom_utils import get_env_config
 
@@ -267,55 +268,6 @@ class iGibsonSemanticActionEnv(ABC):
         image, symbolic_state = self._finish_action()
         return success, image, symbolic_state
 
-    
-    """
-    def grasp(self, obj_name, forward_downward_dir=None, camera_offset=None, distance_from_camera=0.2): 
-        trg_obj = self.env.task.object_scope[obj_name] 
-        
-        # Get robot position
-        robot_pos, quaternion_pose = render_utils.get_robot_pos_and_q_rotation(self.robot)
-        if self.verbose: print(f"robot_pos: {robot_pos}, quaternion_pose: {quaternion_pose}")
-        
-        # Set trg obj position to be in front of the robot - hopefully it doesn't collide with anything 
-        # TODO: make it more robust via sampling (e.g. in a 3d sphere centered in the best position) + constraint checking
-        if forward_downward_dir is None:
-            forward_downward_dir = np.array([1, 0, -0.25]) # direction in which the camera is looking
-        if camera_offset is None:
-            camera_offset = np.array([0.1, 0.1, 0.7])
-            
-        trg_obj_pos = robot_pos + quaternion_pose.rotate(camera_offset) + quaternion_pose.rotate(forward_downward_dir)*distance_from_camera
-        trg_obj.set_position(trg_obj_pos) # Move object to target position
-        if self.verbose: print(f"Target trg_obj_pos: {trg_obj_pos}")
-        
-        # Render after setting position, but before doing any physics step
-        if self.verbose: render_utils.render_frame_with_trg_obj(self.env, trg_obj, show=True, save=True, add_bbox=True, name='object_to_grasp_t0')
-        
-        # Get object grasp pose
-        grasp_pose, object_direction = self._get_grasp_pose_for_object(trg_obj, robot_pos) 
-        if self.verbose: print(f"grasp_pose: {grasp_pose} - object_direction: {object_direction}")
-        
-        self._move_gripper_to_pose(grasp_pose) # Move gripper to target pose
-        
-        action_generator = self._reach_and_grasp(trg_obj, object_direction, grasp_orn=grasp_pose[1])
-        for i, action in enumerate(action_generator):
-            if self.verbose: print(f"Step {i} - object in hand: {self._get_obj_in_hand()} - Robot is gripping the candidate object: {self.robot.is_grasping(candidate_obj=trg_obj)}")
-            trg_obj.set_position(trg_obj_pos) # keep the object still, while trying to grasp it - not sure it's needed
-            self.robot.apply_action(action)
-            
-            self._settle_physics(steps=1)
-            
-            if self.verbose: render_utils.render_frame_with_trg_obj(self.env, trg_obj, show=True, save=True, add_bbox=True, name=f'object_to_grasp_t{i+1}')
-
-        # How do we check that the object in hand is the right one (condition to return success)
-        if self._get_obj_in_hand() is trg_obj:
-            success = True
-        else:
-            success = False
-
-        image, symbolic_state = self._finish_action()
-        return success, image, symbolic_state
-        """
-
     def _settle_physics(self, *args, **kwargs):
         settle_physics(self.env, *args, **kwargs)
         
@@ -328,8 +280,96 @@ class iGibsonSemanticActionEnv(ABC):
         return image, symbolic_state
 
     def _get_symbolic_state(self):
-        # TODO: implement it in such a way that it returns all the predicates needed for the ground-truth planner/state
-        return None
+        """
+        Returns a dict:
+          predicate_name -> { "arg1[,arg2]" : bool, ... }
+        Only non-None results are stored.
+        """
+        state = defaultdict(dict)
+        objs = get_task_objects(self.env)
+
+        # unary
+        uni_specs = {
+            'is_near':      self._is_near,
+            'is_visible':   self._is_visible,
+            'is_reachable': self._is_reachable,
+            'is_holding':   self._is_holding,
+            'is_movable':   self._is_movable,
+            'is_openable':  self._is_openable,
+            'is_open':      self._is_open,
+        }
+        for o in objs:
+            for pred, fn in uni_specs.items():
+                v = fn(o)
+                if v is not None:
+                    state[pred][o] = v
+
+        # binary
+        bin_specs = {
+            'is_ontop':  self._is_ontop,
+            'is_inside': self._is_inside,
+        }
+        for pred, fn in bin_specs.items():
+            d = defaultdict(bool)
+            for a in objs:
+                for b in objs:
+                    if a == b:
+                        continue
+                    v = fn(a, b)
+                    if v is not None:
+                        d[f"{a},{b}"] = v
+            if d:
+                state[pred] = d
+
+        return state
+
+    def get_obj_from_name(self, obj_name):
+        return self.env.task.object_scope[obj_name]
+
+    def _is_near(self, obj_name):
+        obj = self.get_obj_from_name(obj_name)
+        d = self._get_distance_from_robot(obj.get_position())
+        return d < self.ROBOT_DISTANCE_THRESHOLD
+
+    def _is_visible(self, obj_name):
+        obj = self.get_obj_from_name(obj_name)
+        return obj.states[object_states.IsVisible].get_value(env=self.env)
+
+    def _is_reachable(self, obj_name):
+        return self._is_near(obj_name) and self._is_visible(obj_name)
+
+    def _is_holding(self, obj_name):
+        obj = self.get_obj_from_name(obj_name)
+        return self._get_obj_in_hand() is obj
+
+    def _is_movable(self, obj_name):
+        obj = self.get_obj_from_name(obj_name)
+        _, _, extents, _ = obj.get_base_aligned_bounding_box(visual=False)
+        return np.any(extents < GUARANTEED_GRASPABLE_WIDTH)
+
+    def _is_openable(self, obj_name):
+        obj = self.get_obj_from_name(obj_name)
+        return object_states.Open in obj.states
+
+    def _is_open(self, obj_name):
+        if not self._is_openable(obj_name):
+            return None
+        obj = self.get_obj_from_name(obj_name)
+        return obj.states[object_states.Open].get_value()
+
+    def _is_ontop(self, obj_name, below_name):
+        if not self._is_movable(obj_name):
+            return None
+        obj   = self.get_obj_from_name(obj_name)
+        below = self.get_obj_from_name(below_name)
+        return obj.states[object_states.OnTop].get_value(below)
+
+    def _is_inside(self, obj_name, container_name):
+        if not (self._is_movable(obj_name) and self._is_openable(container_name)):
+            return None
+        obj       = self.get_obj_from_name(obj_name)
+        container = self.get_obj_from_name(container_name)
+        return obj.states[object_states.Inside].get_value(container)
 
     def _get_robot_pose_from_2d_pose(self, pose_2d):
         pos = np.array([pose_2d[0], pose_2d[1], self.DEFAULT_BODY_OFFSET_FROM_FLOOR])
@@ -445,23 +485,6 @@ class iGibsonSemanticActionEnv(ABC):
         distances = np.linalg.norm(positions-robot_pos)
         closest = np.argmin(distances)
         return poses[closest]
-
-    # Old function, doesn't work for FetchRobot, which collides with the floor
-    #@staticmethod
-    #def _detect_collision(body, obj_in_hand=None):
-    #    collision = []
-    #    obj_in_hand_id = None
-    #    if obj_in_hand is not None:
-    #        [obj_in_hand_id] = obj_in_hand.get_body_ids()
-
-    #    for body_id in range(p.getNumBodies()):
-    #        if body_id == body or body_id == obj_in_hand_id:
-    #            continue
-    #        closest_points = p.getClosestPoints(body, body_id, distance=0.01)
-    #        if len(closest_points) > 0:
-    #            collision.append(body_id)
-    #            break
-    #    return collision
 
     @staticmethod
     def _detect_collision(body_id, obj_in_hand=None, tol=1e-2): # 1 cm of tolerance is quite high
