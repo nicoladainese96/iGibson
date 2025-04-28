@@ -2,8 +2,10 @@
 /mystuff/images/rendering_attempts
 /mystuff/images/*.jpg
 /mystuff/images/*.png
-/sym_server/*.jpg
-/sym_server/*.png
+/sim_server/*.jpg
+/sim_server/*.png
+/sim_server/images/*.jpg
+/sim_server/images/*.png
 *.pyc
 *.pyd
 *.pkl
