@@ -162,6 +162,20 @@ def reset_state(sim_env, state_before, list_of_obj_to_awake):
         obj.force_wakeup()
     sim_env._settle_physics()
 
+def sample_point_on_top(surface_obj):
+    from igibson.object_states.utils import get_center_extent
+
+    # Center and extension in 3 cardinal axes of the axis-aligned bounding box of the container object
+    aabb_center, aabb_extent = get_center_extent(surface_obj.states)
+
+    # Sample a point on top of the container
+    min3d = aabb_center - aabb_extent * 0.2
+    max3d = aabb_center + aabb_extent * 0.2
+    x_coord = np.random.uniform(min3d[0], max3d[0])
+    y_coord = np.random.uniform(min3d[1], max3d[1])
+    point = np.array([x_coord, y_coord, aabb_center[2] + aabb_extent[2] * 0.5])
+    return point
+
 def sample_point_in_container(container_obj):
     from igibson.object_states.utils import get_center_extent
 
