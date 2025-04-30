@@ -14,7 +14,7 @@ from igibson.object_states.utils import get_center_extent
 from igibson.action_primitives.action_primitive_set_base import ActionPrimitiveError
 from igibson.utils.grasp_planning_utils import get_grasp_poses_for_object, GUARANTEED_GRASPABLE_WIDTH
 
-from igibson.primitives_utils import open_and_make_all_obj_visible, settle_physics, get_task_objects, sample_point_on_top
+from igibson.primitives_utils import open_and_make_all_obj_visible, settle_physics, get_task_objects, sample_point_on_top, sample_point_in_container, place_until_visible
 import igibson.render_utils as render_utils
 from igibson.custom_utils import get_env_config
 
@@ -70,9 +70,54 @@ class iGibsonSemanticActionEnv(ABC):
     @abstractmethod
     def close(self, container_obj_name): pass
 
-    @abstractmethod
-    def place_inside(self, trg_obj_name, container_obj_name): pass
+    def place_inside(self, trg_obj_name, container_obj_name):
+        for obj_name in [trg_obj_name, container_obj_name]:
+            if obj_name not in self.env.task.object_scope:
+                if self.verbose:
+                    print(f"Object {obj_name} not in task object scope.")
+                image, symbolic_state = self._finish_action()
+                return False, image, symbolic_state
+
+        trg_obj = self.env.task.object_scope[trg_obj_name]
+        container_obj = self.env.task.object_scope[container_obj_name]
+
+        if not container_obj.states[object_states.Open].get_value():
+            if self.verbose:
+                print(f"Container {container_obj_name} is not open.")
+            image, symbolic_state = self._finish_action()
+            return False, image, symbolic_state
+
+        if self._get_obj_in_hand() != trg_obj:
+            if self.verbose:
+                print(f"Object {trg_obj_name} not in hand.")
+            image, symbolic_state = self._finish_action()
+            return False, image, symbolic_state
+
+        # Release the object
+        for i, action in enumerate(self._release_grasp()):
+            if self.verbose:
+                print(f"Step {i}: in_hand={self._get_obj_in_hand()}")
+            self.robot.apply_action(action)
+            self._settle_physics(steps=1)
+
+        # Check if the object is in hand
+        if self._get_obj_in_hand() is not None:
+            if self.verbose:
+                print(f"Unable to release {trg_obj_name} for place-inside action.")
+            image, symbolic_state = self._finish_action()
+            return False, image, symbolic_state
         
+        success = place_until_visible(
+            self, trg_obj, container_obj, max_distance_from_shoulder=self.ROBOT_DISTANCE_THRESHOLD,
+            debug=self.verbose)
+
+        # Reset the robot pose
+        self.robot.reset()
+        self.robot.keep_still()
+        image, symbolic_state = self._finish_action(do_physics_steps=True)
+
+        return success, image, symbolic_state
+
     def place_on_top(self, trg_obj_name, container_obj_name):
         for obj_name in [trg_obj_name, container_obj_name]:
             if obj_name not in self.env.task.object_scope:
@@ -106,6 +151,9 @@ class iGibsonSemanticActionEnv(ABC):
         
         candidate_pos = sample_point_on_top(container_obj)
         trg_obj.set_position(candidate_pos)
+        # Reset the robot pose
+        self.robot.reset()
+        self.robot.keep_still()
         # Give object time to fall, if applicable -- some edge cases do need this long
         self._settle_physics(80)
         orientation = trg_obj.sample_orientation()
