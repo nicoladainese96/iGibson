@@ -59,9 +59,6 @@ class FetchRobotSemanticActionEnv(iGibsonSemanticActionEnv):
     def place_inside(self, trg_obj_name, container_obj_name): 
         pass
         
-    def place_on_top(self, trg_obj_name, container_obj_name): 
-        pass
-
     # debug this
     def _move_gripper_to_pose(self, pose):
         joint_pos = self._solve_ik(pose) 
