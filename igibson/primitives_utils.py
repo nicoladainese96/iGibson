@@ -261,20 +261,8 @@ def open_and_make_all_obj_visible(
                 break
 
         # If all objects are visible, near (reachable) and inside the container: no need to do further attempts 
-        all_visible = np.all([trg_obj.states[object_states.IsVisible].get_value(env=sim_env.env) for trg_obj in objects])
-        all_inside = np.all([trg_obj.states[object_states.inside.Inside].get_value(container_obj) for trg_obj in objects])
-        all_near = np.all([sim_env._get_distance_from_robot(trg_obj.get_position()) < max_distance_from_shoulder for trg_obj in objects])
-
-        if debug:
-            for name, trg_obj in zip(names, objects):
-                print(f"{name} IsVisible: ", trg_obj.states[object_states.IsVisible].get_value(env=sim_env.env))
-                print(f"{name} IsInside: ", trg_obj.states[object_states.inside.Inside].get_value(container_obj))
-                print(f"{name} IsNear: ", sim_env._get_distance_from_robot(trg_obj.get_position()) < max_distance_from_shoulder)
-                print(f'Distance from shoulder: {sim_env._get_distance_from_robot(trg_obj.get_position()):.3f}')
-                
-            print(f"all_visible: {all_visible} - all_inside: {all_inside} - all_near: {all_near}")
-            
-        if all_visible and all_inside and all_near:
+        visible_conditions = check_visible_conditions(sim_env, objects, container_obj, max_distance_from_shoulder, debug, object_names=names)
+        if visible_conditions:
             return True
 
     # If function fails, restore to initial state the environment
@@ -282,6 +270,56 @@ def open_and_make_all_obj_visible(
     for obj in objects_to_wake:
         obj.force_wakeup()
     sim_env._settle_physics(steps=2) # no need to have much steps here
+
+    return False
+
+def check_visible_conditions(sim_env, objects, container_obj, max_distance_from_shoulder, debug=False, object_names=None):
+    all_visible = np.all([trg_obj.states[object_states.IsVisible].get_value(env=sim_env.env) for trg_obj in objects])
+    all_inside = np.all([trg_obj.states[object_states.inside.Inside].get_value(container_obj) for trg_obj in objects])
+    all_near = np.all([sim_env._get_distance_from_robot(trg_obj.get_position()) < max_distance_from_shoulder for trg_obj in objects])
+
+    if debug:
+        for i, trg_obj in enumerate(objects):
+            if object_names is not None:
+                name = object_names[i]
+            else:
+                name = trg_obj.name
+            print(f"{name} IsVisible: ", trg_obj.states[object_states.IsVisible].get_value(env=sim_env.env))
+            print(f"{name} IsInside: ", trg_obj.states[object_states.inside.Inside].get_value(container_obj))
+            print(f"{name} IsNear: ", sim_env._get_distance_from_robot(trg_obj.get_position()) < max_distance_from_shoulder)
+            print(f'Distance from shoulder: {sim_env._get_distance_from_robot(trg_obj.get_position()):.3f}')
+
+        print(f"all_visible: {all_visible} - all_inside: {all_inside} - all_near: {all_near}")
+    return all_visible and all_inside and all_near
+
+def place_until_visible(
+    sim_env,
+    trg_obj,
+    container_obj,
+    sampling_budget=300,
+    physics_steps=5,
+    physics_steps_extra=15,
+    max_distance_from_shoulder=1.0,
+    debug=False,
+):
+    objects = [trg_obj]
+    for _ in range(sampling_budget):
+        success, info = make_visible(
+            sim_env, trg_obj, container_obj, objects,
+            sampling_budget=sampling_budget,
+            physics_steps=physics_steps,
+            physics_steps_extra=physics_steps_extra,
+            max_distance=max_distance_from_shoulder
+        )
+        orientation = trg_obj.sample_orientation()
+        trg_obj.set_orientation(orientation)
+        trg_obj.force_wakeup()
+
+        if success:
+            # If all objects are visible, near (reachable) and inside the container: no need to do further attempts
+            visible_conditions = check_visible_conditions(sim_env, objects, container_obj, max_distance_from_shoulder, debug)
+            if visible_conditions:
+                return True
 
     return False
 
