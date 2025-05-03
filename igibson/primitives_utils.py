@@ -59,7 +59,7 @@ def check_collision_one_body(obj1, tol=1e-2):
 def get_task_objects(env):
     # Let's also check for collisions here, assuming that there should be none, as it's the default state (sort of)
     filtered_object_names_list = [name for name in list(env.task.object_scope.keys()) \
-                                  if name.split('.')[0] not in ['agent', 'floor']]
+                                  if name.split('.')[0] not in ['agent','floor']]
     return filtered_object_names_list
 
 def print_status_within_container(sim_env, container_obj, max_distance_from_shoulder=0.9):
@@ -123,7 +123,7 @@ def get_names_of_visible_obj_inside(env, container_obj):
 
 def open_or_close(sim_env, container_obj): # Not used anywhere so far
     state_before_action = p.saveState()
-    print(f"{container_obj.bddl_object_scope} is open: {container_obj.states[object_states.Open].get_value()}")
+    #print(f"{container_obj.bddl_object_scope} is open: {container_obj.states[object_states.Open].get_value()}")
     
     if not container_obj.states[object_states.Open].get_value():
         container_obj.states[object_states.Open].set_value(True) # check out if this is enough
@@ -137,12 +137,12 @@ def open_or_close(sim_env, container_obj): # Not used anywhere so far
         
     sim_env._settle_physics()
 
-    print(f"{container_obj.bddl_object_scope} is open: {container_obj.states[object_states.Open].get_value()}")
+    #print(f"{container_obj.bddl_object_scope} is open: {container_obj.states[object_states.Open].get_value()}")
     return state_before_action, [container_obj]
     
 def open_container(sim_env, container_obj):
     state_before_action = p.saveState()
-    print(f"{container_obj.bddl_object_scope} is open: {container_obj.states[object_states.Open].get_value()}")
+    #print(f"{container_obj.bddl_object_scope} is open: {container_obj.states[object_states.Open].get_value()}")
     
     if not container_obj.states[object_states.Open].get_value():
         container_obj.states[object_states.Open].set_value(True) # check out if this is enough
@@ -153,7 +153,7 @@ def open_container(sim_env, container_obj):
             
         sim_env._settle_physics()
 
-    print(f"{container_obj.bddl_object_scope} is open: {container_obj.states[object_states.Open].get_value()}")
+    #print(f"{container_obj.bddl_object_scope} is open: {container_obj.states[object_states.Open].get_value()}")
     return state_before_action, [container_obj]
 
 def reset_state(sim_env, state_before, list_of_obj_to_awake):
@@ -161,6 +161,69 @@ def reset_state(sim_env, state_before, list_of_obj_to_awake):
     for obj in list_of_obj_to_awake:
         obj.force_wakeup()
     sim_env._settle_physics()
+                        
+def close_container(sim_env, container_obj, sampling_budget=200, debug=False):
+    
+    # We want to close the container but also to place all the objects inside it
+    def all_conditions_ok(trg_obj, container_obj, list_of_already_ok_objects):
+        is_inside = trg_obj.states[object_states.inside.Inside].get_value(container_obj)
+        if not is_inside: 
+            return False # Should be inside 
+        else:
+            is_visible = trg_obj.states[object_states.IsVisible].get_value(env=sim_env.env)
+            if is_visible:
+                return False # Should not be visible
+            else:
+                has_collisions = check_collision_one_body(trg_obj)
+                if has_collisions:
+                    return False # Should not have collisions
+                else:
+                    other_inside = np.all([obj.states[object_states.inside.Inside].get_value(container_obj) \
+                                    for obj in list_of_already_ok_objects])
+                    if other_inside:
+                        return True # Already sampled objects should remain inside
+                    else:
+                        return False
+            
+    def resample_inside(obj, container_obj, sim_env):
+        candidate_pos = sample_point_in_container(container_obj)
+        obj.set_position(candidate_pos)
+        sim_env._settle_physics()
+        return
+        
+    # Get list of objects inside the container
+    object_names_list, objects_inside = get_objects_inside(sim_env.env, container_obj)
+    
+    # Close the container (requires state re-loading somehow)
+    container_obj.states[object_states.Open].set_value(False)
+    state = container_obj.dump_state()
+    container_obj.load_state(state)
+    sim_env._settle_physics()
+
+    # Resample all objects one by one until they satisfy all conditions
+    # (Inside, not colliding, not visible)
+    list_of_already_ok_objects = []
+    for obj in objects_inside:
+        state_before_sampling = p.saveState()
+        
+        for i in range(sampling_budget):
+            if i > 0:
+                # Reset state between attempts 
+                # Note: objects already sampled are maintained in the successfully sampled position
+                reset_state(sim_env, state_before_sampling, list_of_already_ok_objects+[obj])
+
+            # Resample object inside AABB of the container
+            resample_inside(obj, container_obj, sim_env) # no return
+            
+            if all_conditions_ok(obj, container_obj, list_of_already_ok_objects):
+                # Object sampled successfully, pass to the next
+                list_of_already_ok_objects.append(obj)
+                break
+    
+    # Check if all objects were successfully placed
+    success = len(list_of_already_ok_objects) == len(objects_inside)
+    
+    return success
 
 def sample_point_on_top(surface_obj):
     from igibson.object_states.utils import get_center_extent
@@ -175,6 +238,98 @@ def sample_point_on_top(surface_obj):
     y_coord = np.random.uniform(min3d[1], max3d[1])
     point = np.array([x_coord, y_coord, aabb_center[2] + aabb_extent[2] * 0.5])
     return point
+
+def sample_point_next_to(trg_obj, container_obj):
+    from igibson.object_states.utils import get_center_extent
+
+    # Center and extension in 3 cardinal axes of the axis-aligned bounding box of the container object
+    aabb_center1, aabb_extent1 = get_center_extent(trg_obj.states)
+    aabb_center2, aabb_extent2 = get_center_extent(container_obj.states)
+
+    # Height = z of base point of container_obj + vertical extension of trg_obj 
+    # it should be suspended by half the aabb_extent1[2] on top of the surface on which is container_obj
+    z = container_obj.get_position()[2] + aabb_extent1[2] + np.random.uniform(0, 0.1)
+
+    # Compute minimum radius in xy plane from center of each object 
+    
+    r1 = np.linalg.norm(aabb_extent1[:2]/2) # sqrt(x^2+y^2)
+    r2 = np.linalg.norm(aabb_extent2[:2]/2)
+    theta = np.random.uniform(0, 2*np.pi)
+
+    # Offsets from the xy center of container_obj on where to place the center of trg_obj
+    dx = np.cos(theta)*(r1+r2)
+    dy = np.sin(theta)*(r1+r2)
+    
+    point = np.array([aabb_center2[0]+dx, aabb_center2[1]+dy, z])
+    return point
+
+def check_all_conditions_next_to(sim_env, trg_obj, container_obj, max_distance, debug=False):
+    is_visible = trg_obj.states[object_states.IsVisible].get_value(env=sim_env.env)
+    if not is_visible:
+        return False
+    else:
+        is_next_to = trg_obj.states[object_states.next_to.NextTo].get_value(container_obj)
+        if not is_next_to:
+            return False
+        else:
+            has_collisions = check_collision_one_body(trg_obj)
+            if has_collisions:
+                return False
+            else:
+                is_near = sim_env._get_distance_from_robot(trg_obj.get_position()) < max_distance
+                if not is_near:
+                    return False
+                else:
+                    other_visible = container_obj.states[object_states.IsVisible].get_value(env=sim_env.env)
+                    if other_visible:
+                        return True
+                    else:
+                        return False
+    
+def sample_until_next_to(
+    sim_env, 
+    trg_obj, 
+    container_obj, 
+    max_distance,  
+    sampling_budget=300,
+    physics_steps=5,
+    physics_steps_extra=15,
+    debug=False
+):
+
+    # Save a snapshot of the initial state to reset after failed attempts
+    original_container_state = p.saveState()
+    objects_to_wake = [trg_obj, container_obj]
+    
+    for i in range(sampling_budget):
+        if i > 0:
+            # If needed, restore initial state
+            restoreState(original_container_state)
+            for obj in objects_to_wake:
+                obj.force_wakeup()
+            sim_env._settle_physics(steps=2) # no need to have much steps here
+
+        # Sample candidate position
+        candidate_point = sample_point_next_to(trg_obj, container_obj)
+
+        # Set trg_obj position to candidate position
+        trg_obj.set_position(candidate_point)
+
+        # Run some physics steps
+        sim_env._settle_physics(physics_steps)
+        if debug:
+            render_utils.render_frame(sim_env.env)
+        if check_all_conditions_next_to(sim_env, trg_obj, container_obj, max_distance, debug):
+            # Run for further steps
+            sim_env._settle_physics(physics_steps_extra)
+
+            if check_all_conditions_next_to(sim_env, trg_obj, container_obj, max_distance, debug):
+                if debug: print(f"Action sample_until_next_to succeeded at attempt {i+1}")
+                return True
+
+    # Out of budget
+    if debug: print("Action sample_until_next_to failed because out of budget.")
+    return False
 
 def sample_point_in_container(container_obj):
     from igibson.object_states.utils import get_center_extent

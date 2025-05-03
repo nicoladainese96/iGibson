@@ -53,9 +53,6 @@ class FetchRobotSemanticActionEnv(iGibsonSemanticActionEnv):
         self.gripper_link_idx = self.robot._links['gripper_link'].link_id
         self.verbose = verbose
 
-    def close(self, container_obj_name): 
-        pass
-
     # debug this
     def _move_gripper_to_pose(self, pose):
         joint_pos = self._solve_ik(pose) 

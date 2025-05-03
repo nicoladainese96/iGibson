@@ -14,7 +14,7 @@ from igibson.object_states.utils import get_center_extent
 from igibson.action_primitives.action_primitive_set_base import ActionPrimitiveError
 from igibson.utils.grasp_planning_utils import get_grasp_poses_for_object, GUARANTEED_GRASPABLE_WIDTH
 
-from igibson.primitives_utils import open_and_make_all_obj_visible, settle_physics, get_task_objects, sample_point_on_top, sample_point_in_container, place_until_visible
+from igibson.primitives_utils import open_and_make_all_obj_visible, settle_physics, get_task_objects, sample_point_on_top, sample_until_next_to, sample_point_in_container, place_until_visible, close_container
 import igibson.render_utils as render_utils
 from igibson.custom_utils import get_env_config
 
@@ -68,8 +68,64 @@ class iGibsonSemanticActionEnv(ABC):
 
     # Some methods are left as abstract just because are still to be implemented, others because they are embodiment-depenedent
     @abstractmethod
-    def close(self, container_obj_name): pass
+    def _move_gripper_to_pose(self, pose): pass
 
+    @abstractmethod
+    def _get_obj_in_hand(self): pass
+
+    @abstractmethod
+    def _reach_and_grasp(self, trg_obj, object_direction, grasp_orn): pass
+
+    @abstractmethod
+    def _execute_grasp(self): pass
+        
+    @abstractmethod
+    def _get_distance_from_robot(self, position): pass
+
+    @abstractmethod
+    def _detect_robot_collision(self): pass
+
+    def apply_action(self, action):
+        if hasattr(self, action['action']):
+            return getattr(self, action['action'])(**action['params'])
+        else:
+            raise ValueError(f"Unknown action '{action['action']}' in plan.")
+
+    def get_state_and_image(self):
+        return self._finish_action()
+        
+    def go_to(self, obj_name): 
+        trg_obj = self.env.task.object_scope[obj_name] 
+        
+        pose_2d = self._sample_pose_near_object(trg_obj) 
+        self.robot.set_position_orientation(*self._get_robot_pose_from_2d_pose(pose_2d))
+        success = True
+        image, symbolic_state = self._finish_action(do_physics_steps=True)
+        return success, image, symbolic_state
+        
+    def open(self, obj_name, **kwargs): 
+        container_obj = self.env.task.object_scope[obj_name] 
+        
+        success = open_and_make_all_obj_visible(
+            self,
+            container_obj,
+            max_distance_from_shoulder=self.ROBOT_DISTANCE_THRESHOLD,
+            debug=self.verbose,
+            **kwargs
+        )
+        image, symbolic_state = self._finish_action()
+        return success, image, symbolic_state
+
+    def close(self, obj_name): 
+        container_obj = self.env.task.object_scope[obj_name] 
+        success = close_container(
+            self,
+            container_obj,
+            debug=self.verbose,
+        )
+        image, symbolic_state = self._finish_action()
+        return success, image, symbolic_state
+        
     def place_inside(self, trg_obj_name, container_obj_name):
         for obj_name in [trg_obj_name, container_obj_name]:
             if obj_name not in self.env.task.object_scope:
@@ -148,7 +204,8 @@ class iGibsonSemanticActionEnv(ABC):
                 print(f"Unable to release {trg_obj_name} for place-on-top action.")
             image, symbolic_state = self._finish_action()
             return False, image, symbolic_state
-        
+
+        # Does this always work at the first shot?
         candidate_pos = sample_point_on_top(container_obj)
         trg_obj.set_position(candidate_pos)
         # Reset the robot pose
@@ -162,62 +219,48 @@ class iGibsonSemanticActionEnv(ABC):
         image, symbolic_state = self._finish_action(do_physics_steps=True)
         return True, image, symbolic_state
 
-    @abstractmethod
-    def _move_gripper_to_pose(self, pose): pass
+    def place_next_to(self, trg_obj_name, container_obj_name):
+        for obj_name in [trg_obj_name, container_obj_name]:
+            if obj_name not in self.env.task.object_scope:
+                if self.verbose:
+                    print(f"Object {obj_name} not in task object scope.")
+                image, symbolic_state = self._finish_action()
+                return False, image, symbolic_state
 
-    @abstractmethod
-    def _get_obj_in_hand(self): pass
+        trg_obj = self.env.task.object_scope[trg_obj_name]
+        container_obj = self.env.task.object_scope[container_obj_name]
 
-    @abstractmethod
-    def _reach_and_grasp(self, trg_obj, object_direction, grasp_orn): pass
+        if self._get_obj_in_hand() != trg_obj:
+            if self.verbose:
+                print(f"Object {trg_obj_name} not in hand.")
+            image, symbolic_state = self._finish_action()
+            return False, image, symbolic_state
 
-    @abstractmethod
-    def _execute_grasp(self): pass
+        # Release the object
+        for i, action in enumerate(self._release_grasp()):
+            if self.verbose:
+                print(f"Step {i}: in_hand={self._get_obj_in_hand()}")
+            self.robot.apply_action(action)
+            self._settle_physics(steps=1)
 
-    def _release_grasp(self):
-        action = np.zeros(self.robot.action_dim)
-        # opposite of close gripper
-        action[self.robot.controller_action_idx[f"gripper_{self.robot.default_arm}"]] = np.array([1.0])
-        for _ in range(self.MAX_STEPS_FOR_GRASP_OR_RELEASE):
-            yield action
-        
-    @abstractmethod
-    def _get_distance_from_robot(self, position): pass
+        # Check if the object is in hand
+        if self._get_obj_in_hand() is not None:
+            if self.verbose:
+                print(f"Unable to release {trg_obj_name} for place-on-top action.")
+            image, symbolic_state = self._finish_action()
+            return False, image, symbolic_state
 
-    @abstractmethod
-    def _detect_robot_collision(self): pass
+        success = sample_until_next_to(
+            self, trg_obj, container_obj, max_distance=self.ROBOT_DISTANCE_THRESHOLD, 
+            debug=self.verbose)
 
-    def apply_action(self, action):
-        if hasattr(self, action['action']):
-            return getattr(self, action['action'])(**action['params'])
-        else:
-            raise ValueError(f"Unknown action '{action['action']}' in plan.")
-
-    def get_state_and_image(self):
-        return self._finish_action()
-        
-    def go_to(self, obj_name): 
-        trg_obj = self.env.task.object_scope[obj_name] 
-        
-        pose_2d = self._sample_pose_near_object(trg_obj) 
-        self.robot.set_position_orientation(*self._get_robot_pose_from_2d_pose(pose_2d))
-        success = True
+        # Reset the robot pose
+        self.robot.reset()
+        self.robot.keep_still()
         image, symbolic_state = self._finish_action(do_physics_steps=True)
-        return success, image, symbolic_state
-        
-    def open(self, obj_name, **kwargs): 
-        container_obj = self.env.task.object_scope[obj_name] 
-        
-        success = open_and_make_all_obj_visible(
-            self,
-            container_obj,
-            max_distance_from_shoulder=self.ROBOT_DISTANCE_THRESHOLD,
-            debug=self.verbose,
-            **kwargs
-        )
-        image, symbolic_state = self._finish_action()
-        return success, image, symbolic_state
 
+        return success, image, symbolic_state
+        
     # TODO: debug and double-check
     def grasp(self, obj_name, forward_downward_dir=None, camera_offset=None, distance_from_camera=0.2, sample_budget=20):
         """
@@ -381,15 +424,15 @@ class iGibsonSemanticActionEnv(ABC):
         state = defaultdict(dict)
         objs = get_task_objects(self.env)
 
-        # unary
+        # unary - all commented one are computable but not needed
         uni_specs = {
-            'is_near':      self._is_near,
-            'is_visible':   self._is_visible,
-            'is_reachable': self._is_reachable,
-            'is_holding':   self._is_holding,
-            'is_movable':   self._is_movable,
-            'is_openable':  self._is_openable,
-            'is_open':      self._is_open,
+            #'is_near':      self._is_near,
+            #'is_visible':   self._is_visible,
+            'reachable': self._is_reachable,
+            'holding':   self._is_holding,
+            #'is_movable':   self._is_movable,
+            #'is_openable':  self._is_openable,
+            'open':      self._is_open,
         }
         for o in objs:
             for pred, fn in uni_specs.items():
@@ -399,13 +442,21 @@ class iGibsonSemanticActionEnv(ABC):
 
         # binary
         bin_specs = {
-            'is_ontop':  self._is_ontop,
-            'is_inside': self._is_inside,
+            'ontop':  self._is_ontop,
+            'inside': self._is_inside,
+            'nextto': self._is_nextto,
         }
+
+        # These need to be checked as well for the ontop predicate
+        floors = [name for name in list(self.env.task.object_scope.keys()) if 'floor' in name]
         for pred, fn in bin_specs.items():
             d = defaultdict(bool)
             for a in objs:
-                for b in objs:
+                if pred == 'ontop':
+                    obj_list = objs+floors
+                else:
+                    obj_list = objs
+                for b in obj_list:
                     if a == b:
                         continue
                     v = fn(a, b)
@@ -432,6 +483,8 @@ class iGibsonSemanticActionEnv(ABC):
         return self._is_near(obj_name) and self._is_visible(obj_name)
 
     def _is_holding(self, obj_name):
+        if not self._is_movable(obj_name):
+            return None
         obj = self.get_obj_from_name(obj_name)
         return self._get_obj_in_hand() is obj
 
@@ -463,6 +516,20 @@ class iGibsonSemanticActionEnv(ABC):
         obj       = self.get_obj_from_name(obj_name)
         container = self.get_obj_from_name(container_name)
         return obj.states[object_states.Inside].get_value(container)
+
+    def _is_nextto(self, obj_name, nextto_name):
+        if not (self._is_movable(obj_name)):
+            return None
+        obj       = self.get_obj_from_name(obj_name)
+        obj_nextto = self.get_obj_from_name(nextto_name)
+        return obj.states[object_states.next_to.NextTo].get_value(obj_nextto)
+
+    def _release_grasp(self):
+        action = np.zeros(self.robot.action_dim)
+        # opposite of close gripper
+        action[self.robot.controller_action_idx[f"gripper_{self.robot.default_arm}"]] = np.array([1.0])
+        for _ in range(self.MAX_STEPS_FOR_GRASP_OR_RELEASE):
+            yield action
 
     def _get_robot_pose_from_2d_pose(self, pose_2d):
         pos = np.array([pose_2d[0], pose_2d[1], self.DEFAULT_BODY_OFFSET_FROM_FLOOR])
@@ -510,7 +577,7 @@ class iGibsonSemanticActionEnv(ABC):
                 obj_rooms = obj.in_rooms if obj.in_rooms else [self.scene.get_room_instance_by_point(pos_on_obj[:2])]
         
                 yaw = np.random.uniform(-yaw_range, yaw_range)
-                distance = np.random.uniform(0.4, 0.9)
+                distance = np.random.uniform(0.4, 1.1) # max was 0.9, bumped up to 1.1
         
                 pose_2d = point_in_front_with_local_yaw(object_center, orientation, distance, yaw_offset_deg=yaw)
                 new_yaw = np.arctan2(object_center[1] - pose_2d[1], object_center[0] - pose_2d[0])
