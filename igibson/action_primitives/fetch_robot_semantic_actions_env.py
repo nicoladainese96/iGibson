@@ -20,7 +20,7 @@ from igibson.custom_utils import get_env_config
 import igibson.render_utils as render_utils
 
 class FetchRobotSemanticActionEnv(iGibsonSemanticActionEnv):
-    ROBOT_DISTANCE_THRESHOLD = 1.2 # just hardcoded for now
+    ROBOT_DISTANCE_THRESHOLD = 1.5 # was 1.2
     DEFAULT_BODY_OFFSET_FROM_FLOOR = 0.007 # not fond, but whatever
     arm = 'right_hand' # might be already correct - untested
 
@@ -53,6 +53,9 @@ class FetchRobotSemanticActionEnv(iGibsonSemanticActionEnv):
         self.gripper_link_idx = self.robot._links['gripper_link'].link_id
         self.verbose = verbose
 
+    def slice(self, trg_obj_name): 
+        raise NotImplementedError
+        
     # debug this
     def _move_gripper_to_pose(self, pose):
         joint_pos = self._solve_ik(pose) 

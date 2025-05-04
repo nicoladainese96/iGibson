@@ -38,6 +38,16 @@ class iGibsonSemanticActionEnv(ABC):
     ROBOT_DISTANCE_THRESHOLD = None
     DEFAULT_BODY_OFFSET_FROM_FLOOR = None
     MAX_STEPS_FOR_GRASP_OR_RELEASE = 10
+    SIM_ENV_ACTION_NAMES = {
+        'grasp':'grasp',
+        'place-on':'place_on_top',
+        'place-next-to':'place_next_to',
+        'place-inside':'place_inside',
+        'open-container':'open',
+        'close-container':'close',
+        'navigate-to':'go_to',
+        'slice':'slice' # not implemented yet, but let's see
+    }
     
     def __init__(self, task, scene_id, verbose=False):
         env_config = get_env_config()
@@ -68,6 +78,9 @@ class iGibsonSemanticActionEnv(ABC):
 
     # Some methods are left as abstract just because are still to be implemented, others because they are embodiment-depenedent
     @abstractmethod
+    def slice(self, trg_obj_name): pass
+    
+    @abstractmethod
     def _move_gripper_to_pose(self, pose): pass
 
     @abstractmethod
@@ -86,26 +99,86 @@ class iGibsonSemanticActionEnv(ABC):
     def _detect_robot_collision(self): pass
 
     def apply_action(self, action):
-        if hasattr(self, action['action']):
-            return getattr(self, action['action'])(**action['params'])
+        """
+        action: dict with following entries
+          action['action']: str
+          action['params']: list[str]
+        """
+        # Translate from pddl convention to internal methods and objects' names
+        # e.g. 
+        translated_action = self.translate_action(action)
+        
+        if hasattr(self, translated_action['action']):
+            return getattr(self, translated_action['action'])(*translated_action['params']) # was using **action['params']
         else:
-            raise ValueError(f"Unknown action '{action['action']}' in plan.")
+            raise ValueError(f"Unknown action '{translated_action['action']}' in plan.")
 
+    def translate_action(self, action):
+        action_name = action['action'] # str
+        action_args = action['params'] # list[str]
+        
+        # Translate action_name
+        translated_action_name = self.SIM_ENV_ACTION_NAMES[action_name]
+        
+        # Process action arguments
+
+        # Loop over action_args and translate them to sim_env names
+        object_names = list(self.env.task.object_scope.keys()) # this should include floors as well
+    
+        translated_action_args = []
+        for arg_name in action_args:
+            translated_arg = self.match_name_to_sim_env(arg_name, object_names)
+            translated_action_args.append(translated_arg)
+    
+        sim_env_action = {'action':translated_action_name, 'params':translated_action_args}
+        return sim_env_action
+    
     def get_state_and_image(self):
         return self._finish_action()
         
     def go_to(self, obj_name): 
-        trg_obj = self.env.task.object_scope[obj_name] 
+        # Check that object exist
+        if obj_name not in self.env.task.object_scope:
+            print(f"Object {obj_name} not in task object scope.")
+            image, symbolic_state = self._finish_action()
+            return False, image, symbolic_state
+
+        # Enforce preconditions: don't navigate to things hidden in a closed container
+        # Skip, the action is going to fail gracefully in case anyways
         
+        trg_obj = self.env.task.object_scope[obj_name] 
+
+        # Execute action
         pose_2d = self._sample_pose_near_object(trg_obj) 
         self.robot.set_position_orientation(*self._get_robot_pose_from_2d_pose(pose_2d))
         success = True
         image, symbolic_state = self._finish_action(do_physics_steps=True)
+
+        if success:
+            # Double check for debugging
+            assert symbolic_state['reachable'][obj_name] == True, "Actions succeeded but target object is not reachable!"
+            
         return success, image, symbolic_state
         
     def open(self, obj_name, **kwargs): 
+        # Check that object exist
+        if obj_name not in self.env.task.object_scope:
+            print(f"Object {obj_name} not in task object scope.")
+            image, symbolic_state = self._finish_action()
+            return False, image, symbolic_state
+
+        # Enforce preconditions: reachable, not open, empty_hand
+        reachable = self._is_reachable(obj_name)
+        is_open = self._is_open(obj_name)
+        empty_hand = self._get_obj_in_hand() is None
+        if not reachable or is_open or not empty_hand:
+            print(f"Preconditions not satisfied. reachable={reachable} ; is_open={is_open} ; empty_hand={empty_hand}")
+            image, symbolic_state = self._finish_action()
+            return False, image, symbolic_state
+            
         container_obj = self.env.task.object_scope[obj_name] 
-        
+
+        # Execute action
         success = open_and_make_all_obj_visible(
             self,
             container_obj,
@@ -114,38 +187,60 @@ class iGibsonSemanticActionEnv(ABC):
             **kwargs
         )
         image, symbolic_state = self._finish_action()
+        if success:
+            # Double check for debugging
+            assert symbolic_state['open'][obj_name] == True, "Actions succeeded but target object is not open!"
         return success, image, symbolic_state
 
     def close(self, obj_name): 
+        # Check that object exist
+        if obj_name not in self.env.task.object_scope:
+            print(f"Object {obj_name} not in task object scope.")
+            image, symbolic_state = self._finish_action()
+            return False, image, symbolic_state
+
         container_obj = self.env.task.object_scope[obj_name] 
+        
+        # Enforce preconditions: reachable, open, empty_hand
+        reachable = self._is_reachable(obj_name)
+        is_open = self._is_open(obj_name)
+        empty_hand = self._get_obj_in_hand() is None
+        if not reachable or not is_open or not empty_hand:
+            print(f"Preconditions not satisfied. reachable={reachable} ; is_open={is_open} ; empty_hand={empty_hand}")
+            image, symbolic_state = self._finish_action()
+            return False, image, symbolic_state
+        
+        # Execute action
         success = close_container(
             self,
             container_obj,
             debug=self.verbose,
         )
         image, symbolic_state = self._finish_action()
+        
+        if success:
+            # Double check for debugging
+            assert symbolic_state['open'][obj_name] == False, "Actions succeeded but target object is not closed!"
+            
         return success, image, symbolic_state
         
     def place_inside(self, trg_obj_name, container_obj_name):
+        # Check that objects exist
         for obj_name in [trg_obj_name, container_obj_name]:
             if obj_name not in self.env.task.object_scope:
-                if self.verbose:
-                    print(f"Object {obj_name} not in task object scope.")
+                print(f"Object {obj_name} not in task object scope.")
                 image, symbolic_state = self._finish_action()
                 return False, image, symbolic_state
 
         trg_obj = self.env.task.object_scope[trg_obj_name]
         container_obj = self.env.task.object_scope[container_obj_name]
 
-        if not container_obj.states[object_states.Open].get_value():
-            if self.verbose:
-                print(f"Container {container_obj_name} is not open.")
-            image, symbolic_state = self._finish_action()
-            return False, image, symbolic_state
-
-        if self._get_obj_in_hand() != trg_obj:
-            if self.verbose:
-                print(f"Object {trg_obj_name} not in hand.")
+        # Check precondition: open(container_obj), reachable(container_obj), holding(trg_obj)
+        reachable = self._is_reachable(container_obj_name)
+        is_open = self._is_open(container_obj_name)
+        holding_trg_obj = self._is_holding(trg_obj_name)
+        if not reachable or not is_open or not holding_trg_obj:
+            print(f"Preconditions not satisfied. reachable={reachable} ; is_open={is_open} ; holding_trg_obj={holding_trg_obj}")
             image, symbolic_state = self._finish_action()
             return False, image, symbolic_state
 
@@ -172,22 +267,28 @@ class iGibsonSemanticActionEnv(ABC):
         self.robot.keep_still()
         image, symbolic_state = self._finish_action(do_physics_steps=True)
 
+        if success:
+            # Double check for debugging
+            assert symbolic_state['inside'][f'{trg_obj_name},{container_obj_name}'] == True, "Actions succeeded but target object is not inside container object!"
+            
         return success, image, symbolic_state
 
     def place_on_top(self, trg_obj_name, container_obj_name):
+        # Check that objects exist
         for obj_name in [trg_obj_name, container_obj_name]:
             if obj_name not in self.env.task.object_scope:
-                if self.verbose:
-                    print(f"Object {obj_name} not in task object scope.")
+                print(f"Object {obj_name} not in task object scope.")
                 image, symbolic_state = self._finish_action()
                 return False, image, symbolic_state
 
         trg_obj = self.env.task.object_scope[trg_obj_name]
         container_obj = self.env.task.object_scope[container_obj_name]
 
-        if self._get_obj_in_hand() != trg_obj:
-            if self.verbose:
-                print(f"Object {trg_obj_name} not in hand.")
+        # Enforce preconditions
+        holding_trg_obj = self._is_holding(trg_obj_name)
+        bottom_obj_reachable = self._is_reachable(container_obj_name)
+        if not holding_trg_obj or not bottom_obj_reachable:
+            print(f"Preconditions not satisfied. holding_trg_obj={holding_trg_obj} ; bottom_obj_reachable={bottom_obj_reachable}")
             image, symbolic_state = self._finish_action()
             return False, image, symbolic_state
 
@@ -217,22 +318,28 @@ class iGibsonSemanticActionEnv(ABC):
         trg_obj.set_orientation(orientation)
         trg_obj.force_wakeup()
         image, symbolic_state = self._finish_action(do_physics_steps=True)
+        
+        # Double check for debugging
+        assert symbolic_state['ontop'][f'{trg_obj_name},{container_obj_name}'] == True, "Actions succeeded but target object is not on top of the container object!"
+
         return True, image, symbolic_state
 
     def place_next_to(self, trg_obj_name, container_obj_name):
+        # Check that objects exist
         for obj_name in [trg_obj_name, container_obj_name]:
             if obj_name not in self.env.task.object_scope:
-                if self.verbose:
-                    print(f"Object {obj_name} not in task object scope.")
+                print(f"Object {obj_name} not in task object scope.")
                 image, symbolic_state = self._finish_action()
                 return False, image, symbolic_state
 
         trg_obj = self.env.task.object_scope[trg_obj_name]
         container_obj = self.env.task.object_scope[container_obj_name]
 
-        if self._get_obj_in_hand() != trg_obj:
-            if self.verbose:
-                print(f"Object {trg_obj_name} not in hand.")
+        # Enforce preconditions: reachable(container_obj), holding(trg_obj)
+        reachable = self._is_reachable(container_obj_name)
+        holding_trg_obj = self._is_holding(trg_obj_name)
+        if not reachable or not holding_trg_obj:
+            print(f"Preconditions not satisfied. holding_trg_obj={holding_trg_obj} ; reachable={reachable}")
             image, symbolic_state = self._finish_action()
             return False, image, symbolic_state
 
@@ -259,16 +366,33 @@ class iGibsonSemanticActionEnv(ABC):
         self.robot.keep_still()
         image, symbolic_state = self._finish_action(do_physics_steps=True)
 
+        if success:
+            # Double check for debugging
+            assert symbolic_state['nextto'][f'{trg_obj_name},{container_obj_name}'] == True, "Actions succeeded but target object is not on top of the other object!"
+            
         return success, image, symbolic_state
         
-    # TODO: debug and double-check
     def grasp(self, obj_name, forward_downward_dir=None, camera_offset=None, distance_from_camera=0.2, sample_budget=20):
         """
         Attempts to grasp an object by sampling up to `sample_budget` grasp poses.
         Returns (success, image, symbolic_state).
         """
+        # Check that object exist
+        if obj_name not in self.env.task.object_scope:
+            print(f"Object {obj_name} not in task object scope.")
+            image, symbolic_state = self._finish_action()
+            return False, image, symbolic_state
+        
+        # Enforce preconditions: reachable and nothing in hand
+        reachable = self._is_reachable(obj_name)
+        empty_hand = self._get_obj_in_hand() is None
+        if not reachable or not empty_hand:
+            print(f"Preconditions not satisfied. reachable({obj_name})={reachable} ; empty_hand()={empty_hand}")
+            image, symbolic_state = self._finish_action()
+            return False, image, symbolic_state
+
         trg_obj = self.env.task.object_scope[obj_name]
-    
+        
         # Get robot base position and orientation
         robot_pos, quat_rot = render_utils.get_robot_pos_and_q_rotation(self.robot)
         if self.verbose:
@@ -356,6 +480,10 @@ class iGibsonSemanticActionEnv(ABC):
             if success:
                 if self.verbose:
                     print(f"Grasp succeeded on attempt {attempt}.")
+                    
+                # Double check for debugging
+                assert state['holding'][obj_name] == True, "Actions succeeded but target object is not in hand!"
+            
                 return True, img, state
             else:
                 if self.verbose:
@@ -666,7 +794,20 @@ class iGibsonSemanticActionEnv(ABC):
     
         return collision
 
+    @staticmethod
+    def match_name_to_sim_env(name, object_names):
+        # Match prefix
+        prefix = name.split('_')[0]
+        filtered_object_names = [obj_name for obj_name in object_names if prefix in obj_name]
+        
+        # Match suffix
+        suffix = '_'+name.split('_')[1]
+        matches = [obj_name for obj_name in filtered_object_names if suffix in obj_name]
 
+        # Assert uniqueness
+        assert len(matches) == 1, f"Too many or too little matches ({len(matches)}), expected only 1."
+        # Return only match
+        return matches[0]
     
         
     
