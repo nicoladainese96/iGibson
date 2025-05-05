@@ -4,9 +4,15 @@ import base64
 from PIL import Image
 import io
 import time
+import argparse
 
-# Base URL for your API
-base_url = "http://gpu36:8000"  # Change node name and port as needed
+# Parse command-line arguments
+parser = argparse.ArgumentParser(description="Test API endpoints.")
+parser.add_argument('--base_url', type=str, default="http://gpu36:8000", help='Base URL for the API')
+args = parser.parse_args()
+
+# Global base URL
+base_url = args.base_url
 
 # Test the reset endpoint
 def test_reset(task, scene_id):
@@ -53,9 +59,7 @@ def test_get_state():
 def test_execute_action(action, obj_name):
     payload = {
         "action": action,
-        "params": {
-            "obj_name": obj_name
-        }
+        "params": [obj_name]
     }
     
     start_time = time.time()
@@ -88,7 +92,7 @@ if __name__ == "__main__":
     # Then test get_state
     test_get_state()
     # Test actions
-    test_execute_action("go_to", "cabinet.n.01_1")
-    test_execute_action("open", "cabinet.n.01_1")
-    test_execute_action("grasp", "cabinet.n.01_1")
+    test_execute_action("navigate-to", "cabinet_1")
+    test_execute_action("open-container", "cabinet_1")
+    test_execute_action("grasp", "bowl_1")
 

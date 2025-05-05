@@ -3,9 +3,9 @@ import base64
 from io import BytesIO
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 import traceback
-from igibson.action_primitives.behavior_robot_semantic_actions_env import BehaviorRobotSemanticActionEnv
+from igibson.action_primitives.fetch_robot_semantic_actions_env import FetchRobotSemanticActionEnv
 
 
 # Create FastAPI app
@@ -17,7 +17,7 @@ class ActionParams(BaseModel):
 
 class ActionRequest(BaseModel):
     action: str
-    params: ActionParams
+    params: List[str] #ActionParams
 
 class ActionResponse(BaseModel):
     success: bool
@@ -32,7 +32,7 @@ class ResetRequest(BaseModel):
 # Initialize environment globally with default values 
 default_task = "cleaning_out_drawers"
 default_scene_id = "Benevolence_1_int"
-env = BehaviorRobotSemanticActionEnv(default_task, default_scene_id, verbose=True)
+env = FetchRobotSemanticActionEnv(default_task, default_scene_id, verbose=False)
 
 @app.post("/execute_action", response_model=ActionResponse)
 async def execute_action(action_request: ActionRequest):
@@ -42,7 +42,7 @@ async def execute_action(action_request: ActionRequest):
         # Format the action in the expected structure
         action = {
             'action': action_request.action,
-            'params': action_request.params.dict()
+            'params': action_request.params
         }
         
         # Apply the action
@@ -72,7 +72,7 @@ async def reset_environment(reset_request: ResetRequest):
     try:
         global env
         # Use task and scene_id from the request body
-        env = BehaviorRobotSemanticActionEnv(reset_request.task, reset_request.scene_id, verbose=True)
+        env = FetchRobotSemanticActionEnv(reset_request.task, reset_request.scene_id, verbose=False)
 
         return {
             "success": True

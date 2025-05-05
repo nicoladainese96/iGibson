@@ -451,14 +451,17 @@ def place_until_visible(
     sim_env,
     trg_obj,
     container_obj,
+    outer_sampling_budget=10,
     sampling_budget=300,
     physics_steps=5,
     physics_steps_extra=15,
     max_distance_from_shoulder=1.0,
     debug=False,
 ):
-    objects = [trg_obj]
-    for _ in range(sampling_budget):
+    original_orientation = copy.deepcopy(trg_obj.get_orientation())
+    
+    objects = []
+    for _ in range(outer_sampling_budget): 
         success, info = make_visible(
             sim_env, trg_obj, container_obj, objects,
             sampling_budget=sampling_budget,
@@ -466,11 +469,19 @@ def place_until_visible(
             physics_steps_extra=physics_steps_extra,
             max_distance=max_distance_from_shoulder
         )
-        orientation = trg_obj.sample_orientation()
-        trg_obj.set_orientation(orientation)
-        trg_obj.force_wakeup()
+        if debug: print("make_visible success: ", success)
 
         if success:
+            try:
+                if debug: print("Sampling orientation")
+                orientation = trg_obj.sample_orientation() # this shit fails
+            except:
+                orientation = original_orientation
+                
+            if debug: print("orientation: ", orientation)
+            trg_obj.set_orientation(orientation)
+            trg_obj.force_wakeup()
+            
             # If all objects are visible, near (reachable) and inside the container: no need to do further attempts
             visible_conditions = check_visible_conditions(sim_env, objects, container_obj, max_distance_from_shoulder, debug)
             if visible_conditions:

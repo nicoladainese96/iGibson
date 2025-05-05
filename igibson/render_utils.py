@@ -1,11 +1,12 @@
 import os
+import copy
 import random
 import trimesh
 import itertools
 import pyquaternion
 import numpy as np
 from PIL import Image, ImageDraw
-
+from scipy.spatial import ConvexHull
 from igibson.utils import utils as ig_utils
 from igibson.object_states.utils import get_center_extent
 
@@ -379,3 +380,85 @@ def sample_position_on_front_face(target_obj):
     face_min = face_center - face_vertical_half_extent - face_lateral_half_extent
     face_max = face_center + face_vertical_half_extent + face_lateral_half_extent
     return np.random.uniform(face_min, face_max)
+
+def bddl_to_pddl(obj_name_bddl):
+    # obj_name.n.0x_y -> obj_name_y
+    prefix = obj_name_bddl.split('.')[0] # obj_name
+    suffix = obj_name_bddl.split('_')[-1] # y
+    obj_name_pddl = f"{prefix}_{suffix}" # obj_name_y
+    return obj_name_pddl
+    
+def annotate_bbox(image, obj, bbox_vertices_uv, sim_env):
+    draw = ImageDraw.Draw(image)
+    obj_name_bddl = obj.bddl_object_scope 
+    obj_name_pddl = bddl_to_pddl(obj_name_bddl) # obj_name.n.0x_y -> obj_name_y
+
+    # Idea for the label: pick rightmost vertex, add top-right diagonal offset, write text there
+    # Maybe add arrow or something pointing to the center of the object if it's not clear
+    # Add safety check that if it goes out of the right side of the picture, 
+    # then you can try with the topmost vertex (vertical shift only), and finally with the lowest vertex
+
+    # Apply reflection on first coordinate
+    vertices_uv = np.stack([image.width - bbox_vertices_uv[:,0], bbox_vertices_uv[:,1]], axis=1)
+
+    rightmost_uv = vertices_uv[np.argmax(vertices_uv[:,0])]
+    u, v = rightmost_uv
+    offset = (5,5)
+    draw.text((u + offset[0], v - offset[1]), obj_name_pddl, font_size=100) # FIX: font size doesn't work
+    
+    return image
+
+def draw_3d_bbox_convex_hull(image, bbox_vertices_uv):
+    draw = ImageDraw.Draw(image)
+    W = image.width
+    
+    # Convert to numpy array and flip u coordinate
+    points = np.array([[W - u, v] for (u, v) in bbox_vertices_uv])
+    
+    # Compute 2D convex hull
+    hull = ConvexHull(points)
+    
+    # Get the hull vertices in order and draw lines between them
+    for i in range(len(hull.vertices)):
+        p1 = tuple(points[hull.vertices[i]])
+        p2 = tuple(points[hull.vertices[(i + 1) % len(hull.vertices)]])
+        draw.line([p1, p2], fill="red", width=2)
+    
+    return image
+    
+# Let's draw on the image the bboxes of the two bowls
+def add_drawings(_image, sim_env):
+    image = copy.deepcopy(_image) # avoid drawing on the orignal image
+    # Get list of visible objects
+    object_names = sim_env._get_task_objects() 
+    visible_objects = [obj_name for obj_name in object_names if sim_env._is_visible(obj_name)] 
+    
+    # Check identical objects
+    identical_objects = []
+    for i in range(len(visible_objects)):
+        for j in range(i+1,len(visible_objects)): # avoid comparing the object to itself and don't consider directionality
+            obj_i = visible_objects[i]
+            obj_j = visible_objects[j]
+            
+            prefix_i = obj_i.split('.')[0]
+            prefix_j = obj_j.split('.')[0]
+
+            if prefix_i == prefix_j:
+                identical_objects += [obj_i, obj_j]
+
+    # If 3 or more identical objects are present, we count certain objects more than once, 
+    # e.g. (1,2), (2,3) => [1,2,2,3]
+    unique_identical_objects = np.unique(identical_objects)
+    
+    # For every duplicate object, draw bbox on image
+    for obj_name in unique_identical_objects:
+        # Assuming the camera was set with set_camera_look_ahead and didn't change since
+        obj = sim_env.get_obj_from_name(obj_name)
+        bbox_vertices_uv = get_bbox_vertices_uv_coord(sim_env.env, obj)
+        image = draw_3d_bbox_convex_hull(image, bbox_vertices_uv)
+        
+        # Finally, add a conviniently placed object tag
+        image = annotate_bbox(image, obj, bbox_vertices_uv, sim_env)
+        
+    # Return modified image
+    return image

@@ -12,7 +12,7 @@ from igibson.utils.utils import restoreState
 from igibson import object_states
 from igibson.object_states.utils import get_center_extent
 from igibson.action_primitives.action_primitive_set_base import ActionPrimitiveError
-from igibson.utils.grasp_planning_utils import get_grasp_poses_for_object, GUARANTEED_GRASPABLE_WIDTH
+from igibson.utils.grasp_planning_utils import get_grasp_poses_for_object
 
 from igibson.primitives_utils import open_and_make_all_obj_visible, settle_physics, get_task_objects, sample_point_on_top, sample_until_next_to, sample_point_in_container, place_until_visible, close_container
 import igibson.render_utils as render_utils
@@ -20,6 +20,7 @@ from igibson.custom_utils import get_env_config
 
 MAX_ATTEMPTS_FOR_SAMPLING_POSE_NEAR_OBJECT = 120
 PHYSICS_STEPS = 3
+GUARANTEED_GRASPABLE_WIDTH = 0.18
 
 class UndoableContext(object):
     def __init__(self, robot):
@@ -482,9 +483,10 @@ class iGibsonSemanticActionEnv(ABC):
                     print(f"Grasp succeeded on attempt {attempt}.")
                     
                 # Double check for debugging
-                assert state['holding'][obj_name] == True, "Actions succeeded but target object is not in hand!"
+                if self.verbose: print("Holding predicates: ", last_state['holding'])
+                assert last_state['holding'][obj_name] == True, "Actions succeeded but target object is not in hand!"
             
-                return True, img, state
+                return True, img, last_state
             else:
                 if self.verbose:
                     print(f"Grasp failed on attempt {attempt}, retrying next sample.")
@@ -540,6 +542,7 @@ class iGibsonSemanticActionEnv(ABC):
             self._settle_physics(steps)
         render_utils.set_camera_look_ahead(self.env)
         image = render_utils.get_image_from_camera(self.env.simulator)
+        image = render_utils.add_drawings(image, self)
         symbolic_state = self._get_symbolic_state()
         return image, symbolic_state
 
@@ -558,7 +561,7 @@ class iGibsonSemanticActionEnv(ABC):
             #'is_visible':   self._is_visible,
             'reachable': self._is_reachable,
             'holding':   self._is_holding,
-            #'is_movable':   self._is_movable,
+            'is_movable':   self._is_movable,
             #'is_openable':  self._is_openable,
             'open':      self._is_open,
         }
@@ -595,62 +598,65 @@ class iGibsonSemanticActionEnv(ABC):
 
         return state
 
+    def _get_task_objects(self):
+        return get_task_objects(self.env)
+        
     def get_obj_from_name(self, obj_name):
         return self.env.task.object_scope[obj_name]
 
     def _is_near(self, obj_name):
         obj = self.get_obj_from_name(obj_name)
         d = self._get_distance_from_robot(obj.get_position())
-        return d < self.ROBOT_DISTANCE_THRESHOLD
+        return bool(d < self.ROBOT_DISTANCE_THRESHOLD)
 
     def _is_visible(self, obj_name):
         obj = self.get_obj_from_name(obj_name)
-        return obj.states[object_states.IsVisible].get_value(env=self.env)
+        return bool(obj.states[object_states.IsVisible].get_value(env=self.env))
 
     def _is_reachable(self, obj_name):
-        return self._is_near(obj_name) and self._is_visible(obj_name)
+        return bool(self._is_near(obj_name)) and bool(self._is_visible(obj_name))
 
     def _is_holding(self, obj_name):
         if not self._is_movable(obj_name):
             return None
         obj = self.get_obj_from_name(obj_name)
-        return self._get_obj_in_hand() is obj
+        return bool(self._get_obj_in_hand() is obj)
 
     def _is_movable(self, obj_name):
         obj = self.get_obj_from_name(obj_name)
         _, _, extents, _ = obj.get_base_aligned_bounding_box(visual=False)
-        return np.any(extents < GUARANTEED_GRASPABLE_WIDTH)
+        return bool(np.any(extents < GUARANTEED_GRASPABLE_WIDTH))
 
     def _is_openable(self, obj_name):
         obj = self.get_obj_from_name(obj_name)
-        return object_states.Open in obj.states
+        return bool(object_states.Open in obj.states)
 
     def _is_open(self, obj_name):
         if not self._is_openable(obj_name):
             return None
         obj = self.get_obj_from_name(obj_name)
-        return obj.states[object_states.Open].get_value()
+        return bool(obj.states[object_states.Open].get_value())
 
     def _is_ontop(self, obj_name, below_name):
         if not self._is_movable(obj_name):
             return None
         obj   = self.get_obj_from_name(obj_name)
         below = self.get_obj_from_name(below_name)
-        return obj.states[object_states.OnTop].get_value(below)
+        return bool(obj.states[object_states.OnTop].get_value(below))
 
     def _is_inside(self, obj_name, container_name):
         if not (self._is_movable(obj_name) and self._is_openable(container_name)):
             return None
         obj       = self.get_obj_from_name(obj_name)
         container = self.get_obj_from_name(container_name)
-        return obj.states[object_states.Inside].get_value(container)
+        return bool(obj.states[object_states.Inside].get_value(container))
 
     def _is_nextto(self, obj_name, nextto_name):
         if not (self._is_movable(obj_name)):
             return None
         obj       = self.get_obj_from_name(obj_name)
         obj_nextto = self.get_obj_from_name(nextto_name)
-        return obj.states[object_states.next_to.NextTo].get_value(obj_nextto)
+        return bool(obj.states[object_states.next_to.NextTo].get_value(obj_nextto))
 
     def _release_grasp(self):
         action = np.zeros(self.robot.action_dim)
@@ -705,7 +711,7 @@ class iGibsonSemanticActionEnv(ABC):
                 obj_rooms = obj.in_rooms if obj.in_rooms else [self.scene.get_room_instance_by_point(pos_on_obj[:2])]
         
                 yaw = np.random.uniform(-yaw_range, yaw_range)
-                distance = np.random.uniform(0.4, 1.1) # max was 0.9, bumped up to 1.1
+                distance = np.random.uniform(0.4, 1.3) # max was 0.9, bumped up to 1.1
         
                 pose_2d = point_in_front_with_local_yaw(object_center, orientation, distance, yaw_offset_deg=yaw)
                 new_yaw = np.arctan2(object_center[1] - pose_2d[1], object_center[0] - pose_2d[0])
