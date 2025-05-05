@@ -5,7 +5,7 @@ import trimesh
 import itertools
 import pyquaternion
 import numpy as np
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 from scipy.spatial import ConvexHull
 from igibson.utils import utils as ig_utils
 from igibson.object_states.utils import get_center_extent
@@ -393,19 +393,59 @@ def annotate_bbox(image, obj, bbox_vertices_uv, sim_env):
     obj_name_bddl = obj.bddl_object_scope 
     obj_name_pddl = bddl_to_pddl(obj_name_bddl) # obj_name.n.0x_y -> obj_name_y
 
-    # Idea for the label: pick rightmost vertex, add top-right diagonal offset, write text there
-    # Maybe add arrow or something pointing to the center of the object if it's not clear
-    # Add safety check that if it goes out of the right side of the picture, 
-    # then you can try with the topmost vertex (vertical shift only), and finally with the lowest vertex
-
     # Apply reflection on first coordinate
     vertices_uv = np.stack([image.width - bbox_vertices_uv[:,0], bbox_vertices_uv[:,1]], axis=1)
 
-    rightmost_uv = vertices_uv[np.argmax(vertices_uv[:,0])]
-    u, v = rightmost_uv
-    offset = (5,5)
-    draw.text((u + offset[0], v - offset[1]), obj_name_pddl, font_size=100) # FIX: font size doesn't work
-    
+    label = obj_name_pddl
+    font = ImageFont.load_default()
+    label_width, label_height = draw.textsize(label, font=font) # might be incorrect without with fontsize=100
+
+    # Try rightmost point
+    candidates = [
+        vertices_uv[np.argmax(vertices_uv[:, 0])],  # rightmost
+        vertices_uv[np.argmin(vertices_uv[:, 1])],  # topmost
+        vertices_uv[np.argmax(vertices_uv[:, 1])]   # bottommost
+    ]
+
+    offsets = [
+        [10,-10], # shift top-right
+        [10,-10], # shift top-right
+        [0,10] # shift to the bottom
+    ]
+
+    success = False
+    for uv, offset in zip(candidates, offsets):
+        pos_x = uv[0] + offset[0]
+        pos_y = uv[1] + offset[1]
+        # Ensure text stays within image boundaries
+        if (0 <= pos_x <= image.width - label_width) and (0 <= pos_y <= image.height - label_height):
+            draw.text((pos_x, pos_y), label, font_size=100, fill="red")
+
+            # Draw white background rectangle
+            #draw.rectangle([pos_x, pos_y, pos_x + label_width, pos_y + label_height], fill="white")
+            # Draw black text
+            #draw.text((pos_x, pos_y), label, font_size=100, fill="black") # might break with fontsize=100
+
+            # Actually the position from which to start the segment depends on the case
+            draw.line([pos_x-2, pos_y+label_height//2, uv[0], uv[1]], fill="red", width=2)  # Draw red segment
+            success = True
+            break
+            
+    if not success:
+        # Fallback to leftmost
+        uv = vertices_uv[np.argmin(vertices_uv[:, 0])]
+        pos_x = uv[0] - label_width - 10
+        pos_y = uv[1] - label_height - 10
+
+        draw.text((pos_x, pos_y), label, font_size=100, fill="red")
+        
+        # Draw white background rectangle
+        #draw.rectangle([pos_x, pos_y, pos_x + label_width, pos_y + label_height], fill="white")
+        # Draw black text
+        #draw.text((pos_x, pos_y), label, font_size=100, fill="black") # might break with fontsize=100
+        
+        draw.line([pos_x + label_width, pos_y+label_height//2, uv[0], uv[1]], fill="red", width=2)  # Draw red segment
+
     return image
 
 def draw_3d_bbox_convex_hull(image, bbox_vertices_uv):
@@ -431,7 +471,10 @@ def add_drawings(_image, sim_env):
     image = copy.deepcopy(_image) # avoid drawing on the orignal image
     # Get list of visible objects
     object_names = sim_env._get_task_objects() 
-    visible_objects = [obj_name for obj_name in object_names if sim_env._is_visible(obj_name)] 
+    visible_objects = [obj_name for obj_name in object_names if sim_env._is_visible(obj_name)]
+
+    # Filter out floor
+    visible_objects = [name for name in visible_objects if not 'floor' in name]
     
     # Check identical objects
     identical_objects = []
@@ -457,7 +500,8 @@ def add_drawings(_image, sim_env):
         bbox_vertices_uv = get_bbox_vertices_uv_coord(sim_env.env, obj)
         image = draw_3d_bbox_convex_hull(image, bbox_vertices_uv)
         
-        # Finally, add a conviniently placed object tag
+        # Finally, add a conviniently placed object tag 
+        # Here we could filter out vertices within the convex hull of previous objects - not done at the moment
         image = annotate_bbox(image, obj, bbox_vertices_uv, sim_env)
         
     # Return modified image

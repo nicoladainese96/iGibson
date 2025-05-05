@@ -1,4 +1,6 @@
 import os
+import bddl
+import json
 import behavior
 import pyquaternion  
 import numpy as np
@@ -39,6 +41,44 @@ def get_env_config():
     # No idea what all this stuff is, but we might want to remove everything that is not useful once we inspect it
     env_config['output'] = ['proprioception','rgb','highlight','depth','seg','ins_seg','task_obs']
     return env_config
+
+def get_variations_list(task):
+    # Common to all activites
+    scene_json = os.path.join(
+        os.path.dirname(bddl.__file__),
+        "activity_to_preselected_scenes.json"
+    )
+    
+    with open(scene_json) as f:
+        activity_to_scenes = json.load(f)
+    
+    scene_instance_pairs = []
+    
+    scene_ids = sorted(set(activity_to_scenes[task])) 
+    instance_ids = [0, 20, 21, 22, 23] # original config and 4 OOD (different furniture and so on)
+    
+    if len(scene_ids) == 3:
+        for scene_id in scene_ids[:-1]: # for the first 2 scenes
+            scene_instance_pairs+=[(scene_id, instance_id) \
+                                           for instance_id in instance_ids[:2]] # consider 2 instances
+        # And only 1 for the last scene
+        scene_instance_pairs+=[(scene_ids[-1], instance_ids[0])]
+    
+    elif len(scene_ids) == 2:
+        # 3 instances for the first scene
+        scene_instance_pairs+=[(scene_ids[0], instance_id) \
+                                           for instance_id in instance_ids[:3]] 
+        # 2 instances for the second one
+        scene_instance_pairs+=[(scene_ids[1], instance_id) \
+                                           for instance_id in instance_ids[:2]] 
+    elif len(scene_ids) == 1:
+        # 5 instances for the only scene
+        scene_instance_pairs+=[(scene_ids[0], instance_id) \
+                                           for instance_id in instance_ids] 
+    else:
+        raise NotImplementedError
+
+    return scene_instance_pairs
     
 def generate_scenes(activity, scene_instance_ids, gen_only_first=False):
     for scene_id in scene_instance_ids:

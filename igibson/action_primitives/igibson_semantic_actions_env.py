@@ -50,12 +50,12 @@ class iGibsonSemanticActionEnv(ABC):
         'slice':'slice' # not implemented yet, but let's see
     }
     
-    def __init__(self, task, scene_id, verbose=False):
+    def __init__(self, task, scene_id, instance_id=0, verbose=False):
         env_config = get_env_config()
         env_config["task"] = task
         env_config["scene_id"] = scene_id
         env_config["task_id"] = 0
-        env_config["instance_id"] = 0
+        env_config["instance_id"] = instance_id
         robot_name = env_config["robot"]["name"] # Keep this in memory as it's removed from the config when we init iGibson
 
         # TODO: add grasping_mode="assisted" or "sticky" to be passed all the way to the robot 
