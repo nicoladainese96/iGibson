@@ -1,6 +1,5 @@
-# This file contains all the low-level logic to implement the high-level actions common to all embodiments
-
 import random
+import itertools
 import numpy as np
 import pybullet as p
 from scipy.spatial.transform import Rotation
@@ -53,7 +52,7 @@ class iGibsonSemanticActionEnv(ABC):
         'slice':'slice' # not implemented yet, but let's see
     }
     
-    def __init__(self, task, scene_id, instance_id=0, verbose=False):
+    def __init__(self, task, scene_id, instance_id=0, verbose=False, debug=False):
         env_config = get_env_config()
         env_config["task"] = task
         env_config["scene_id"] = scene_id
@@ -79,6 +78,7 @@ class iGibsonSemanticActionEnv(ABC):
         self.scene = self.env.scene
         self.robot = self.env.robots[0]
         self.verbose = verbose
+        self.debug = debug # activates assert statements at the end of the actions
 
     # Some methods are left as abstract just because are still to be implemented, others because they are embodiment-depenedent
     @abstractmethod
@@ -154,14 +154,18 @@ class iGibsonSemanticActionEnv(ABC):
 
         # Execute action
         pose_2d = self._sample_pose_near_object(trg_obj) 
-        self.robot.set_position_orientation(*self._get_robot_pose_from_2d_pose(pose_2d))
-        success = True
-        image, symbolic_state = self._finish_action(do_physics_steps=True)
+        if pose_2d is not None:
+            self.robot.set_position_orientation(*self._get_robot_pose_from_2d_pose(pose_2d))
+            success = True
+            image, symbolic_state = self._finish_action(do_physics_steps=True)
 
-        if success:
-            # Double check for debugging
-            assert symbolic_state['reachable'][obj_name] == True, "Action succeeded but target object is not reachable!"
+            if self.debug:
+                assert symbolic_state['reachable'][obj_name] == True, "Action succeeded but target object is not reachable!"
             
+        else:
+            success = False
+            image, symbolic_state = self._finish_action(do_physics_steps=True)
+
         return success, image, symbolic_state
         
     def open(self, obj_name, **kwargs): 
@@ -216,9 +220,10 @@ class iGibsonSemanticActionEnv(ABC):
             **kwargs
         )
         image, symbolic_state = self._finish_action()
-        if success:
-            # Double check for debugging
+        
+        if success and self.debug:
             assert symbolic_state['open'][obj_name] == True, "Action succeeded but target object is not open!"
+            
         return success, image, symbolic_state
 
     def close(self, obj_name): 
@@ -273,8 +278,7 @@ class iGibsonSemanticActionEnv(ABC):
         )
         image, symbolic_state = self._finish_action()
         
-        if success:
-            # Double check for debugging
+        if success and self.debug:
             assert symbolic_state['open'][obj_name] == False, "Action succeeded but target object is not closed!"
             
         return success, image, symbolic_state
@@ -322,8 +326,7 @@ class iGibsonSemanticActionEnv(ABC):
         self.robot.keep_still()
         image, symbolic_state = self._finish_action(do_physics_steps=True)
 
-        if success:
-            # Double check for debugging
+        if success and self.debug:
             assert symbolic_state['inside'][f'{trg_obj_name},{container_obj_name}'] == True, "Action succeeded but target object is not inside container object!"
             
         return success, image, symbolic_state
@@ -374,8 +377,8 @@ class iGibsonSemanticActionEnv(ABC):
         trg_obj.force_wakeup()
         image, symbolic_state = self._finish_action(do_physics_steps=True)
         
-        # Double check for debugging
-        assert symbolic_state['ontop'][f'{trg_obj_name},{container_obj_name}'] == True, "Action succeeded but target object is not on top of the container object!"
+        if self.debug:
+            assert symbolic_state['ontop'][f'{trg_obj_name},{container_obj_name}'] == True, "Action succeeded but target object is not on top of the container object!"
 
         return True, image, symbolic_state
 
@@ -421,8 +424,7 @@ class iGibsonSemanticActionEnv(ABC):
         self.robot.keep_still()
         image, symbolic_state = self._finish_action(do_physics_steps=True)
 
-        if success:
-            # Double check for debugging
+        if success and self.debug:
             assert symbolic_state['nextto'][f'{trg_obj_name},{container_obj_name}'] == True, "Action succeeded but target object is not on top of the other object!"
             
         return success, image, symbolic_state
@@ -537,8 +539,10 @@ class iGibsonSemanticActionEnv(ABC):
                     print(f"Grasp succeeded on attempt {attempt}.")
                     
                 # Double check for debugging
-                if self.verbose: print("Holding predicates: ", last_state['holding'])
-                assert last_state['holding'][obj_name] == True, "Action succeeded but target object is not in hand!"
+                if self.verbose: 
+                    print("Holding predicates: ", last_state['holding'])
+                if self.debug:
+                    assert last_state['holding'][obj_name] == True, "Action succeeded but target object is not in hand!"
             
                 return True, img, last_state
             else:
@@ -743,46 +747,34 @@ class iGibsonSemanticActionEnv(ABC):
         
     def _sample_pose_near_object(self, obj):
         object_center, orientation = obj.get_position_orientation()
-    
-        def point_in_front_with_local_yaw(position, orientation, distance=1.0, yaw_offset_deg=0.0, local_forward=[0, 1, 0]):
-            def wxyz_to_xyzw(quat_wxyz):
-                w, x, y, z = quat_wxyz
-                return [x, y, z, w]
-    
-            yaw_offset_rad = np.radians(yaw_offset_deg)
-            local_yaw_rot = Rotation.from_euler('z', yaw_offset_rad).apply(local_forward)
-            orientation_xyzw = wxyz_to_xyzw(orientation)
-            world_direction = p.rotateVector(orientation_xyzw, local_yaw_rot)
-    
-            position = np.array(position)
-            world_direction = np.array(world_direction)
-    
-            return position + distance * world_direction
 
+        # Gradually expand the search with the budget
         yaw_ranges = [45, 60, 90]
         min_distances = [0.6, 0.5, 0.4]
         max_distances = [0.9, 1.1, 1.3]
-        for yaw_range, min_distance, max_distance in zip(yaw_ranges, min_distances, max_distances) :
-            for _ in range(MAX_ATTEMPTS_FOR_SAMPLING_POSE_NEAR_OBJECT//3):
-                pos_on_obj = np.array(self._sample_position_on_aabb_face(obj))
-                obj_rooms = obj.in_rooms if obj.in_rooms else [self.scene.get_room_instance_by_point(pos_on_obj[:2])]
         
-                yaw = np.random.uniform(-yaw_range, yaw_range)
-                distance = np.random.uniform(min_distance, max_distance) # max was 0.9, bumped up to 1.1
-        
-                pose_2d = point_in_front_with_local_yaw(object_center, orientation, distance, yaw_offset_deg=yaw)
-                new_yaw = np.arctan2(object_center[1] - pose_2d[1], object_center[0] - pose_2d[0])
-                pose_2d[2] = new_yaw
-        
-                if not self._test_pose(pose_2d, obj, pos_on_obj=pos_on_obj):
-                    continue
-        
-                return pose_2d
-    
-        raise ActionPrimitiveError(
-            ActionPrimitiveError.Reason.SAMPLING_ERROR, "Could not find valid position near object."
-        )
+        for yaw_range, min_distance, max_distance in zip(yaw_ranges, min_distances, max_distances):
+            sampling_budget = MAX_ATTEMPTS_FOR_SAMPLING_POSE_NEAR_OBJECT//3
+            # Pseudo-random efficient sampler
+            sampler = AnnularSampler(
+                center=object_center,
+                orientation=orientation,
+                r_min=min_distance,
+                r_max=max_distance,
+                yaw_range_deg=yaw_range,
+                sampling_budget=sampling_budget
+            )
 
+            for _ in range(sampling_budget):
+                try:
+                    pose_2d = sampler.sample(repeat=True)
+                except StopIteration:
+                    break
+            
+                if self._test_pose(pose_2d, obj):
+                    return pose_2d
+    
+        return None
 
     def _test_pose(self, pose_2d, obj, pos_on_obj=None):
         with UndoableContext(self.robot):
@@ -907,9 +899,70 @@ class iGibsonSemanticActionEnv(ABC):
         assert len(matches) == 1, f"Too many or too little matches ({len(matches)}), expected only 1."
         # Return only match
         return matches[0]
-    
-        
-    
-    
-        
-    
+
+# Helper class to sample efficiently positions to navigate to
+class AnnularSampler:
+    def __init__(
+        self,
+        center,
+        orientation,
+        r_min,
+        r_max,
+        yaw_range_deg,
+        sampling_budget,
+        local_forward=[0, 1, 0]
+    ):
+        self.center = np.array(center)
+        self.orientation = orientation
+        self.r_min = r_min
+        self.r_max = r_max
+        self.yaw_range_deg = yaw_range_deg
+        self.local_forward = np.array(local_forward)
+
+        # Determine yaw and radial bin counts based on the budget
+        self.num_yaw_bins = int(np.ceil(np.sqrt(sampling_budget)))
+        self.num_radial_bins = int(np.ceil(sampling_budget / self.num_yaw_bins))
+
+        # Create yaw bins (in degrees)
+        self.yaw_bins = np.linspace(
+            -yaw_range_deg, yaw_range_deg, self.num_yaw_bins, endpoint=False
+        )
+
+        # Area-uniform radial samples (via stratified sqrt of uniform area sampling)
+        r2_min = r_min ** 2
+        r2_max = r_max ** 2
+        r2_samples = np.linspace(r2_min, r2_max, self.num_radial_bins, endpoint=False)
+        self.radial_bins = np.sqrt(r2_samples)
+
+        # Generate grid and shuffle
+        self.grid_points = []
+        for yaw in self.yaw_bins:
+            for radius in self.radial_bins:
+                self.grid_points.append((yaw, radius))
+        np.random.shuffle(self.grid_points)
+
+        self.index = 0
+
+    def _point_from_yaw_and_distance(self, yaw_offset_deg, distance):
+        yaw_offset_rad = np.radians(yaw_offset_deg)
+        local_yaw_rot = Rotation.from_euler('z', yaw_offset_rad).apply(self.local_forward)
+
+        def wxyz_to_xyzw(q):
+            return [q[1], q[2], q[3], q[0]]
+
+        orientation_xyzw = wxyz_to_xyzw(self.orientation)
+        world_direction = p.rotateVector(orientation_xyzw, local_yaw_rot)
+
+        target = self.center + distance * np.array(world_direction)
+        return target
+
+    def sample(self, repeat=False):
+        if self.index >= len(self.grid_points) and not repeat:
+            raise StopIteration("All grid points have been sampled.")
+
+        yaw, distance = self.grid_points[self.index%len(self.grid_points)]
+        self.index += 1
+
+        pos = self._point_from_yaw_and_distance(yaw, distance)
+        yaw_rad = np.arctan2(self.center[1] - pos[1], self.center[0] - pos[0])
+        return np.array([pos[0], pos[1], yaw_rad])

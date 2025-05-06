@@ -24,7 +24,7 @@ class FetchRobotSemanticActionEnv(iGibsonSemanticActionEnv):
     DEFAULT_BODY_OFFSET_FROM_FLOOR = 0.007 # not fond, but whatever
     arm = 'right_hand' # might be already correct - untested
 
-    def __init__(self, task, scene_id, instance_id=0, verbose=False):
+    def __init__(self, task, scene_id, instance_id=0, verbose=False, debug=False):
         env_config = get_env_config()
         env_config["task"] = task
         env_config["scene_id"] = scene_id
@@ -52,7 +52,8 @@ class FetchRobotSemanticActionEnv(iGibsonSemanticActionEnv):
         self.robot_id = self.robot._body_ids[0]
         self.gripper_link_idx = self.robot._links['gripper_link'].link_id
         self.verbose = verbose
-
+        self.debug = debug
+        
     def slice(self, trg_obj_name): 
         raise NotImplementedError
         
