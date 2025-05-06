@@ -2,10 +2,15 @@
 /mystuff/images/rendering_attempts
 /mystuff/images/*.jpg
 /mystuff/images/*.png
+mystuff/images/**/*.jpg
+mystuff/images/**/*.jpeg
+mystuff/images/**/*.png
+mystuff/images/**/*.gif
 /sim_server/*.jpg
 /sim_server/*.png
 /sim_server/images/*.jpg
 /sim_server/images/*.png
+/mystuff/results/
 *.pyc
 *.pyd
 *.pkl

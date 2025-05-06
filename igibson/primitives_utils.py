@@ -1,11 +1,13 @@
 import copy
 import numpy as np
 import pybullet as p
+from itertools import product
 
 from igibson.utils.utils import restoreState
 from igibson import object_states
 from igibson.action_primitives.starter_semantic_action_primitives import StarterSemanticActionPrimitives
 import igibson.render_utils as render_utils
+from igibson.object_states.utils import get_center_extent
 
 PHYSICS_STEPS = 30
 
@@ -185,10 +187,11 @@ def close_container(sim_env, container_obj, sampling_budget=200, debug=False):
                     else:
                         return False
             
-    def resample_inside(obj, container_obj, sim_env):
-        candidate_pos = sample_point_in_container(container_obj)
+    def resample_inside(obj, sampler, sim_env):
+        #candidate_pos = sample_point_in_container(container_obj)
+        candidate_pos = sampler.sample(repeat=True)
         obj.set_position(candidate_pos)
-        sim_env._settle_physics()
+        sim_env._settle_physics(steps=10)
         return
         
     # Get list of objects inside the container
@@ -205,7 +208,8 @@ def close_container(sim_env, container_obj, sampling_budget=200, debug=False):
     list_of_already_ok_objects = []
     for obj in objects_inside:
         state_before_sampling = p.saveState()
-        
+
+        sampler = GridSampler3D(container_obj, sampling_budget)
         for i in range(sampling_budget):
             if i > 0:
                 # Reset state between attempts 
@@ -213,12 +217,20 @@ def close_container(sim_env, container_obj, sampling_budget=200, debug=False):
                 reset_state(sim_env, state_before_sampling, list_of_already_ok_objects+[obj])
 
             # Resample object inside AABB of the container
-            resample_inside(obj, container_obj, sim_env) # no return
+            
+            resample_inside(obj, sampler, sim_env) # no return
             
             if all_conditions_ok(obj, container_obj, list_of_already_ok_objects):
                 # Object sampled successfully, pass to the next
                 list_of_already_ok_objects.append(obj)
                 break
+
+    # Try closing the container a second time!
+    # Close the container (requires state re-loading somehow)
+    container_obj.states[object_states.Open].set_value(False)
+    state = container_obj.dump_state()
+    container_obj.load_state(state)
+    sim_env._settle_physics()
     
     # Check if all objects were successfully placed
     success = len(list_of_already_ok_objects) == len(objects_inside)
@@ -226,8 +238,6 @@ def close_container(sim_env, container_obj, sampling_budget=200, debug=False):
     return success
 
 def sample_point_on_top(surface_obj):
-    from igibson.object_states.utils import get_center_extent
-
     # Center and extension in 3 cardinal axes of the axis-aligned bounding box of the container object
     aabb_center, aabb_extent = get_center_extent(surface_obj.states)
 
@@ -240,8 +250,6 @@ def sample_point_on_top(surface_obj):
     return point
 
 def sample_point_next_to(trg_obj, container_obj):
-    from igibson.object_states.utils import get_center_extent
-
     # Center and extension in 3 cardinal axes of the axis-aligned bounding box of the container object
     aabb_center1, aabb_extent1 = get_center_extent(trg_obj.states)
     aabb_center2, aabb_extent2 = get_center_extent(container_obj.states)
@@ -332,8 +340,6 @@ def sample_until_next_to(
     return False
 
 def sample_point_in_container(container_obj):
-    from igibson.object_states.utils import get_center_extent
-
     # Center and extension in 3 cardinal axes of the axis-aligned bounding box of the container object
     aabb_center, aabb_extent = get_center_extent(container_obj.states)
 
@@ -546,6 +552,8 @@ def make_visible(sim_env, trg_obj, container_obj, objects_positioned=[], samplin
     original_position = copy.deepcopy(trg_obj.get_position()) # not sure this is needed
     # Save initial state
     pb_initial_state = p.saveState()
+
+    sampler = GridSampler3D(container_obj, sampling_budget)
     
     # 4. Sampling loop: 
     for i in range(sampling_budget):
@@ -553,8 +561,9 @@ def make_visible(sim_env, trg_obj, container_obj, objects_positioned=[], samplin
         restoreState(pb_initial_state)
         
         # Sample 3d point inside the container volume
-        candidate_pos = sample_point_in_container(container_obj)
-
+        #candidate_pos = sample_point_in_container(container_obj)
+        candidate_pos = sampler.sample(repeat=True)
+        
         is_near = sim_env._get_distance_from_robot(candidate_pos) < max_distance 
         if is_near:
                 
@@ -600,3 +609,40 @@ def get_objects_inside(env, container_obj):
             objects.append(obj)
             
     return names, objects
+
+class GridSampler3D:
+    def __init__(self, container_obj, sampling_budget):
+        self.container_obj = container_obj
+        self.sampling_budget = sampling_budget
+        self.grid_points = self._generate_grid_points()
+        self.index = 0
+
+    def _generate_grid_points(self):
+        aabb_center, aabb_extent = get_center_extent(self.container_obj.states)
+        min3d = aabb_center - aabb_extent * 0.5
+        max3d = aabb_center + aabb_extent * 0.5
+
+        # Compute approximate number of divisions per axis
+        total_cells = self.sampling_budget
+        cells_per_axis = int(round(total_cells ** (1/3)))
+        linspaces = [
+            np.linspace(min3d[i], max3d[i], cells_per_axis, endpoint=False) 
+            for i in range(3)
+        ]
+
+        # Cartesian product of grid coordinates
+        raw_points = list(product(*linspaces))
+        np.random.shuffle(raw_points)  # Permute once
+        return raw_points[:self.sampling_budget]  # Crop to budget
+
+    def sample(self, repeat=False):
+        if self.index >= len(self.grid_points):
+            if not repeat:
+                raise StopIteration("All grid points have been sampled.")
+            else:
+                print("Warning: reusing samples.")
+        point = np.array(self.grid_points[self.index % self.sampling_budget])
+        self.index += 1
+        return point
+    
+    

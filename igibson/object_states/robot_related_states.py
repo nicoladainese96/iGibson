@@ -1,7 +1,7 @@
 import numpy as np
 import pyquaternion # import for custom code 
 from scipy.spatial import ConvexHull
-from shapely.geometry import Polygon
+from shapely.geometry import Polygon, box
 
 from igibson.object_states.object_state_base import BooleanState, CachingEnabledObjectState
 from igibson.object_states.pose import Pose
@@ -61,21 +61,31 @@ def set_camera(s,
     s.renderer.set_camera(camera_pos, camera_pos + forward_downward_direction, up_direction)
     s.renderer.set_fov(field_of_view)
 
-def compute_projected_area(uv_coords):
+def compute_projected_area(uv_coords, H, W):
     """
     uv_coords: (8, 2) array of projected 2D points (u,v) in image coordinates
     returns: area in pixels² of the convex hull of the projection
     """
-    uv_coords = np.asarray(uv_coords)
+    uv_coords = np.asarray(uv_coords) # are these points correctly written? u was flipped as W-u
 
     if uv_coords.shape[0] < 3:
         return 0  # Not enough points to define an area
 
     try:
+
+        # Compute convex hull on all projected points
         hull = ConvexHull(uv_coords)
-        hull_pts = uv_coords[hull.vertices]
-        polygon = Polygon(hull_pts)
-        return polygon.area
+        hull_pts = uv_coords[hull.vertices]   # shape (m,2), m ≤ n
+        
+        # Build Shapely geometries
+        poly = Polygon(hull_pts)
+        img_rect = box(0, 0, W - 1, H - 1)    # minx, miny, maxx, maxy
+        
+        # Intersect
+        clipped_poly = poly.intersection(img_rect)
+
+        # Return area
+        return clipped_poly.area
     except Exception as e:
         # Never encontered an error so far
         print(f"Warning: convex hull failed with error: {e}")
@@ -218,8 +228,12 @@ class IsVisible(CachingEnabledObjectState, BooleanState):
             # enough to consider an object visible
             
             bbox_vertices_uv = render_utils.get_bbox_vertices_uv(env, self.obj)
-            
-            projected_bbox_pixels = compute_projected_area(bbox_vertices_uv)
+
+            # Clip vertices within image bounds
+            H = env.config['image_height']
+            W = env.config['image_width']
+        
+            projected_bbox_pixels = compute_projected_area(bbox_vertices_uv, H, W)
             return (total_visible_pixels / (projected_bbox_pixels + 1)) >= relative_threshold 
 
     def _set_value(self, new_value):

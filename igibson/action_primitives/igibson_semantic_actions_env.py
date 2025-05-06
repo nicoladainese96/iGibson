@@ -18,6 +18,9 @@ from igibson.primitives_utils import open_and_make_all_obj_visible, settle_physi
 import igibson.render_utils as render_utils
 from igibson.custom_utils import get_env_config
 
+# Only for debugging
+from igibson.object_states.robot_related_states import compute_projected_area
+
 MAX_ATTEMPTS_FOR_SAMPLING_POSE_NEAR_OBJECT = 120
 PHYSICS_STEPS = 3
 GUARANTEED_GRASPABLE_WIDTH = 0.18
@@ -157,7 +160,7 @@ class iGibsonSemanticActionEnv(ABC):
 
         if success:
             # Double check for debugging
-            assert symbolic_state['reachable'][obj_name] == True, "Actions succeeded but target object is not reachable!"
+            assert symbolic_state['reachable'][obj_name] == True, "Action succeeded but target object is not reachable!"
             
         return success, image, symbolic_state
         
@@ -168,7 +171,34 @@ class iGibsonSemanticActionEnv(ABC):
             image, symbolic_state = self._finish_action()
             return False, image, symbolic_state
 
+        container_obj = self.env.task.object_scope[obj_name] 
+        
         # Enforce preconditions: reachable, not open, empty_hand
+        if self.verbose:
+            distance_from_container = self._get_obj_distance_from_robot(container_obj)
+            print("distance_from_container: ", distance_from_container)
+            is_near = distance_from_container < self.ROBOT_DISTANCE_THRESHOLD
+            print("is_near: ", is_near)
+            _is_near = self._is_near(obj_name)
+            print("_is_near: ", _is_near)
+
+            # Visibility sanity check
+            total_visible_pixels = container_obj.states[object_states.VisiblePixelCountFromRobot].get_value()
+            print("total_visible_pixels: ", total_visible_pixels)
+            bbox_vertices_uv = render_utils.get_bbox_vertices_uv(self.env, container_obj)
+            print("bbox_vertices_uv: ", bbox_vertices_uv)
+            # Clip vertices within image bounds
+            H = self.env.config['image_height']
+            W = self.env.config['image_width']
+            
+            projected_bbox_pixels = compute_projected_area(bbox_vertices_uv, H, W)
+            print("projected_bbox_pixels: ", projected_bbox_pixels)
+            ratio = total_visible_pixels / (projected_bbox_pixels + 1)
+            print("ratio: ", ratio)
+            print("threshold: ", 0.08)
+            is_visible = self._is_visible(obj_name)
+            print("is_visible: ", is_visible)
+            
         reachable = self._is_reachable(obj_name)
         is_open = self._is_open(obj_name)
         empty_hand = self._get_obj_in_hand() is None
@@ -176,8 +206,6 @@ class iGibsonSemanticActionEnv(ABC):
             print(f"Preconditions not satisfied. reachable={reachable} ; is_open={is_open} ; empty_hand={empty_hand}")
             image, symbolic_state = self._finish_action()
             return False, image, symbolic_state
-            
-        container_obj = self.env.task.object_scope[obj_name] 
 
         # Execute action
         success = open_and_make_all_obj_visible(
@@ -190,7 +218,7 @@ class iGibsonSemanticActionEnv(ABC):
         image, symbolic_state = self._finish_action()
         if success:
             # Double check for debugging
-            assert symbolic_state['open'][obj_name] == True, "Actions succeeded but target object is not open!"
+            assert symbolic_state['open'][obj_name] == True, "Action succeeded but target object is not open!"
         return success, image, symbolic_state
 
     def close(self, obj_name): 
@@ -201,7 +229,33 @@ class iGibsonSemanticActionEnv(ABC):
             return False, image, symbolic_state
 
         container_obj = self.env.task.object_scope[obj_name] 
-        
+
+        if self.verbose:
+            # Distance sanity check
+            distance_from_container = self._get_obj_distance_from_robot(container_obj)
+            print("distance_from_container: ", distance_from_container)
+            is_near = distance_from_container < self.ROBOT_DISTANCE_THRESHOLD
+            print("is_near: ", is_near)
+            _is_near = self._is_near(obj_name)
+            print("_is_near: ", _is_near)
+
+            # Visibility sanity check
+            total_visible_pixels = container_obj.states[object_states.VisiblePixelCountFromRobot].get_value()
+            print("total_visible_pixels: ", total_visible_pixels)
+            bbox_vertices_uv = render_utils.get_bbox_vertices_uv(self.env, container_obj)
+            print("bbox_vertices_uv: ", bbox_vertices_uv)
+            # Clip vertices within image bounds
+            H = self.env.config['image_height']
+            W = self.env.config['image_width']
+            
+            projected_bbox_pixels = compute_projected_area(bbox_vertices_uv, H, W)
+            print("projected_bbox_pixels: ", projected_bbox_pixels)
+            ratio = total_visible_pixels / (projected_bbox_pixels + 1)
+            print("ratio: ", ratio)
+            print("threshold: ", 0.08)
+            is_visible = self._is_visible(obj_name)
+            print("is_visible: ", is_visible)
+            
         # Enforce preconditions: reachable, open, empty_hand
         reachable = self._is_reachable(obj_name)
         is_open = self._is_open(obj_name)
@@ -221,7 +275,7 @@ class iGibsonSemanticActionEnv(ABC):
         
         if success:
             # Double check for debugging
-            assert symbolic_state['open'][obj_name] == False, "Actions succeeded but target object is not closed!"
+            assert symbolic_state['open'][obj_name] == False, "Action succeeded but target object is not closed!"
             
         return success, image, symbolic_state
         
@@ -270,7 +324,7 @@ class iGibsonSemanticActionEnv(ABC):
 
         if success:
             # Double check for debugging
-            assert symbolic_state['inside'][f'{trg_obj_name},{container_obj_name}'] == True, "Actions succeeded but target object is not inside container object!"
+            assert symbolic_state['inside'][f'{trg_obj_name},{container_obj_name}'] == True, "Action succeeded but target object is not inside container object!"
             
         return success, image, symbolic_state
 
@@ -321,7 +375,7 @@ class iGibsonSemanticActionEnv(ABC):
         image, symbolic_state = self._finish_action(do_physics_steps=True)
         
         # Double check for debugging
-        assert symbolic_state['ontop'][f'{trg_obj_name},{container_obj_name}'] == True, "Actions succeeded but target object is not on top of the container object!"
+        assert symbolic_state['ontop'][f'{trg_obj_name},{container_obj_name}'] == True, "Action succeeded but target object is not on top of the container object!"
 
         return True, image, symbolic_state
 
@@ -369,7 +423,7 @@ class iGibsonSemanticActionEnv(ABC):
 
         if success:
             # Double check for debugging
-            assert symbolic_state['nextto'][f'{trg_obj_name},{container_obj_name}'] == True, "Actions succeeded but target object is not on top of the other object!"
+            assert symbolic_state['nextto'][f'{trg_obj_name},{container_obj_name}'] == True, "Action succeeded but target object is not on top of the other object!"
             
         return success, image, symbolic_state
         
@@ -484,7 +538,7 @@ class iGibsonSemanticActionEnv(ABC):
                     
                 # Double check for debugging
                 if self.verbose: print("Holding predicates: ", last_state['holding'])
-                assert last_state['holding'][obj_name] == True, "Actions succeeded but target object is not in hand!"
+                assert last_state['holding'][obj_name] == True, "Action succeeded but target object is not in hand!"
             
                 return True, img, last_state
             else:
@@ -606,7 +660,7 @@ class iGibsonSemanticActionEnv(ABC):
 
     def _is_near(self, obj_name):
         obj = self.get_obj_from_name(obj_name)
-        d = self._get_distance_from_robot(obj.get_position())
+        d = self._get_obj_distance_from_robot(obj)
         return bool(d < self.ROBOT_DISTANCE_THRESHOLD)
 
     def _is_visible(self, obj_name):
@@ -705,13 +759,16 @@ class iGibsonSemanticActionEnv(ABC):
     
             return position + distance * world_direction
 
-        for yaw_range in [45, 60, 90]:
+        yaw_ranges = [45, 60, 90]
+        min_distances = [0.6, 0.5, 0.4]
+        max_distances = [0.9, 1.1, 1.3]
+        for yaw_range, min_distance, max_distance in zip(yaw_ranges, min_distances, max_distances) :
             for _ in range(MAX_ATTEMPTS_FOR_SAMPLING_POSE_NEAR_OBJECT//3):
                 pos_on_obj = np.array(self._sample_position_on_aabb_face(obj))
                 obj_rooms = obj.in_rooms if obj.in_rooms else [self.scene.get_room_instance_by_point(pos_on_obj[:2])]
         
                 yaw = np.random.uniform(-yaw_range, yaw_range)
-                distance = np.random.uniform(0.4, 1.3) # max was 0.9, bumped up to 1.1
+                distance = np.random.uniform(min_distance, max_distance) # max was 0.9, bumped up to 1.1
         
                 pose_2d = point_in_front_with_local_yaw(object_center, orientation, distance, yaw_offset_deg=yaw)
                 new_yaw = np.arctan2(object_center[1] - pose_2d[1], object_center[0] - pose_2d[0])
@@ -742,7 +799,9 @@ class iGibsonSemanticActionEnv(ABC):
                 return False
                 
             if pos_on_obj is not None:
-                robot_distance = self._get_distance_from_robot(pos_on_obj) # this is robot-dependent
+                #robot_distance = self._get_distance_from_robot(pos_on_obj) # this is robot-dependent
+                robot_distance = self._get_obj_distance_from_robot(obj)
+                
                 if robot_distance > self.ROBOT_DISTANCE_THRESHOLD:
                     if self.verbose: print("Candidate position failed robot distance test.")
                     return False
@@ -758,7 +817,41 @@ class iGibsonSemanticActionEnv(ABC):
         world_to_body_frame = p.invertTransform(*body_pose)
         relative_target_pose = p.multiplyTransforms(*world_to_body_frame, *pose)
         return relative_target_pose
+
+    def _get_obj_distance_from_robot(self, obj):
+        try:
+            # Get the centers (3d vectors) of all the faces of the aabb
+            face_centers = self.get_face_centers_of_aabb(obj.states) # np.array, shape (6,)
+            
+            # Compute distance for all vectors
+            distances = [self._get_distance_from_robot(v) for v in face_centers]
+                
+            # Take the min and use that as a distance
+            distance = min(distances)
+
+        except Exception as e:
+            if self.verbose:
+                print("Defaulting to distance from the center of the object")
+                print("Exception encountered:", e)
+            distance = self._get_distance_from_robot(obj.get_position())
+        return distance
+
+    @staticmethod
+    def get_face_centers_of_aabb(states):
+        aabb_center, aabb_extent = get_center_extent(states)
         
+        face_centers = []
+        axes = np.eye(3)  # unit vectors for x, y, z axes
+    
+        for axis in range(3):
+            for direction in [-1, 1]:
+                offset = axes[axis] * (aabb_extent[axis] / 2) * direction
+                face_center = aabb_center + offset
+                face_centers.append(face_center)
+        
+        return np.array(face_centers)  # shape (6, 3)
+
+    
     @staticmethod
     def _sample_position_on_aabb_face(target_obj):
         aabb_center, aabb_extent = get_center_extent(target_obj.states)
