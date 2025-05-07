@@ -742,15 +742,22 @@ class iGibsonSemanticActionEnv(ABC):
                 state[pred] = d
 
         return state
+    
+    def bddl_to_pddl(self, obj_name_bddl):
+        # obj_name.n.0x_y -> obj_name_y
+        prefix = obj_name_bddl.split('.')[0] # obj_name
+        suffix = obj_name_bddl.split('_')[-1] # y
+        obj_name_pddl = f"{prefix}_{suffix}" # obj_name_y
+        return obj_name_pddl
+    
+    def get_visible_objects(self):
+        print("Getting visible objs")
+        objs = get_task_objects(self.env)
+        visible_objs = [obj for obj in objs if self._is_visible(obj)]
+        visible_objs = [self.bddl_to_pddl(obj) for obj in visible_objs]
+        return visible_objs
 
     def translate_symbolic_state(self, symbolic_state):
-
-        def bddl_to_pddl(obj_name_bddl):
-            # obj_name.n.0x_y -> obj_name_y
-            prefix = obj_name_bddl.split('.')[0] # obj_name
-            suffix = obj_name_bddl.split('_')[-1] # y
-            obj_name_pddl = f"{prefix}_{suffix}" # obj_name_y
-            return obj_name_pddl
 
         translated_symbolic_state = {}
         # First level contains predicate names, e.g. 'reachable' and 'ontop'
@@ -762,14 +769,14 @@ class iGibsonSemanticActionEnv(ABC):
                 if ',' in arg:
                     # Binary predicates case
                     a, b = arg.split(',')
-                    a_new = bddl_to_pddl(a)
-                    b_new = bddl_to_pddl(b)
+                    a_new = self.bddl_to_pddl(a)
+                    b_new = self.bddl_to_pddl(b)
 
                     # Store value in new dict
                     translated_symbolic_state[pred][f"{a_new},{b_new}"] = symbolic_state[pred][arg]
                 else:
                     # Unary predicate case
-                    arg_new = bddl_to_pddl(arg)
+                    arg_new = self.bddl_to_pddl(arg)
                     translated_symbolic_state[pred][arg_new] = symbolic_state[pred][arg]
         return translated_symbolic_state
                     
