@@ -107,4 +107,20 @@ async def get_environment_state():
         print("Error getting environment state.")
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Error getting environment state: {str(e)}")
+    
+@app.get("/get_visible_objects")
+async def get_visible_objects():
+    print("-----------------------------------------")
+    print("Getting visible objects")
+    
+    try:
+        objects = env.get_visible_objects()
+        
+        return {
+            "objects": objects
+        }
+    except Exception as e:
+        print("Error getting visible objects.")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Error getting visible objects: {str(e)}")
 
