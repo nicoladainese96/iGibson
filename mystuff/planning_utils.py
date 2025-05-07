@@ -2,18 +2,19 @@ import os
 import json
 from PIL import ImageDraw
 
-def execute_plan(sim_env, plan, task, task_instance):
-    # Create image directory
-    image_dir = os.path.join('images', f'{task}_{task_instance}')
-    results_dir = os.path.join('results', f'{task}_{task_instance}')
-    os.makedirs(image_dir, exist_ok=True)
-    os.makedirs(results_dir, exist_ok=True)
+def execute_plan(sim_env, plan, task, task_instance, split='default'):
+    # Define base directories
+    base_image_dir = os.path.join('images', split, f'{task}_{task_instance}')
+    base_results_dir = os.path.join('results', split, f'{task}_{task_instance}')
+    
+    os.makedirs(base_image_dir, exist_ok=True)
+    os.makedirs(base_results_dir, exist_ok=True)
 
     image_idx = 0
     image, symbolic_state = sim_env.get_state_and_image()
 
     # Save initial image
-    image_path = os.path.join(image_dir, f'step_{image_idx}.png')
+    image_path = os.path.join(base_image_dir, f'step_{image_idx}.png')
     image.save(image_path)
     image_idx += 1
 
@@ -27,43 +28,36 @@ def execute_plan(sim_env, plan, task, task_instance):
             print(f'Action {action} executed. Legal: {legal} - Info: {info}')
 
             # Save image after action
-            image_path = os.path.join(image_dir, f'step_{image_idx}.png')
+            image_path = os.path.join(base_image_dir, f'step_{image_idx}.png')
             image.save(image_path)
             image_idx += 1
 
             image.show()
             print_symbolic_state(symbolic_state)
 
-            success = True if 'success' in info else False
+            success = 'success' in info
             plan_status['successes'].append(success)
             plan_status['legals'].append(legal)
 
         except ValueError as e:
             print(f"Action {action} illegal: {e}")
-            success = False
-            legal = False
-            
-            plan_status['successes'].append(success)
-            plan_status['legals'].append(legal)
+            plan_status['successes'].append(False)
+            plan_status['legals'].append(False)
             break
 
         except AssertionError as e:
             print(f"Action {action} failed: {e}")
-            
+
             image, symbolic_state = sim_env.get_state_and_image()
-            image_path = os.path.join(image_dir, f'step_{image_idx}.png')
+            image_path = os.path.join(base_image_dir, f'step_{image_idx}.png')
             image.save(image_path)
             image_idx += 1
 
-            # Why the image doesn't get shown??
             image.show()
             print_symbolic_state(symbolic_state)
-            
-            success = False
-            legal = True
 
-            plan_status['successes'].append(success)
-            plan_status['legals'].append(legal)
+            plan_status['successes'].append(False)
+            plan_status['legals'].append(True)
 
     plan_succeeded = all(plan_status['successes'])
 
@@ -72,11 +66,12 @@ def execute_plan(sim_env, plan, task, task_instance):
         'plan_succeeded': plan_succeeded,
         'plan_status': plan_status
     }
-    result_path = os.path.join(results_dir, 'result.json')
+    result_path = os.path.join(base_results_dir, 'result.json')
     with open(result_path, 'w') as f:
         json.dump(result_data, f, indent=2)
-        
+
     return plan_succeeded, plan_status
+
 
 
 def translate_str_to_dict(action):
