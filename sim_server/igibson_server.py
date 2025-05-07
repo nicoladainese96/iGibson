@@ -1,4 +1,4 @@
-
+import os
 import base64
 from io import BytesIO
 from fastapi import FastAPI, HTTPException
@@ -7,7 +7,38 @@ from typing import Dict, Any, Optional, List
 import traceback
 from igibson.action_primitives.fetch_robot_semantic_actions_env import FetchRobotSemanticActionEnv
 
+import subprocess
+import psutil
 
+def print_system_status():
+    # 1) GPU info
+    print("=== NVIDIA GPU Info ===")
+    try:
+        res = subprocess.run(['nvidia-smi'], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        print(res.stdout if res.returncode == 0 else res.stderr)
+    except FileNotFoundError:
+        print("nvidia-smi not found. Is the NVIDIA driver installed?")
+
+    # 2) CPU usage
+    print("\n=== CPU Usage ===")
+    print(f"CPU Usage: {psutil.cpu_percent(interval=1)}%")
+
+    # 3) Node-wide RAM (for reference)
+    mem = psutil.virtual_memory()
+    print("\n=== Node Memory Usage (total node) ===")
+    print(f"Total:     {mem.total/1e9:.2f} GB")
+    print(f"Used:      {mem.used/1e9:.2f} GB")
+    print(f"Available: {mem.available/1e9:.2f} GB")
+    print(f"Percent:   {mem.percent}%")
+
+    # 4) This process's memory
+    p = psutil.Process(os.getpid())
+    mi = p.memory_info()
+    print("\n=== This Process Memory Usage ===")
+    print(f"RSS (resident): {mi.rss/1e6:.2f} MB")
+    print(f"VMS (virtual):  {mi.vms/1e6:.2f} MB")
+    print(f"Percent of node RAM: {p.memory_percent():.2f}%")
+    
 # Create FastAPI app
 app = FastAPI(title="iGibson Robot Action API")
 
@@ -73,9 +104,15 @@ async def reset_environment(reset_request: ResetRequest):
     print(f"Resetting environment with task: {reset_request.task}, scene_id: {reset_request.scene_id}")
     try:
         global env
+
+        if env is not None and hasattr(env, 'env') and hasattr(env.env, 'clean'):
+            env.env.clean()
+        
         # Use task and scene_id from the request body
         env = FetchRobotSemanticActionEnv(reset_request.task, reset_request.scene_id, verbose=False)
 
+        print_system_status()
+        
         return {
             "success": True
         }
