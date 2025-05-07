@@ -21,6 +21,7 @@ class ActionRequest(BaseModel):
 
 class ActionResponse(BaseModel):
     success: bool
+    info: str
     image: str  # Base64 encoded image
     symbolic_state: Optional[Dict[str, Any]] = {}  # Make it optional with a default empty dict
 
@@ -46,8 +47,8 @@ async def execute_action(action_request: ActionRequest):
         }
         
         # Apply the action
-        success, image, symbolic_state = env.apply_action(action)
-        print(f"Action {action_request.action} executed. Success: {success}")
+        success, info, image, symbolic_state = env.apply_action(action)
+        print(f"Action {action_request.action} executed. Legal: {success} - Exit state: {info}")
         
         # Convert image to base64 string
         buffered = BytesIO()
@@ -57,6 +58,7 @@ async def execute_action(action_request: ActionRequest):
         # Return the response with a default empty dict if symbolic_state is None
         return ActionResponse(
             success=success,
+            info=info,
             image=img_str,
             symbolic_state=symbolic_state if symbolic_state is not None else {}
         )

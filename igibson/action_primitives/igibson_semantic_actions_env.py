@@ -113,10 +113,13 @@ class iGibsonSemanticActionEnv(ABC):
         translated_action = self.translate_action(action)
         
         if hasattr(self, translated_action['action']):
-            return getattr(self, translated_action['action'])(*translated_action['params']) # was using **action['params']
+            success, info, image, symbolic_state = getattr(self, translated_action['action'])(*translated_action['params']) 
+            # Convert state back to pddl notation 
+            translated_symbolic_state = self.translate_symbolic_state(symbolic_state)
+            return success, info, image,translated_symbolic_state
         else:
             raise ValueError(f"Unknown action '{translated_action['action']}' in plan.")
-
+        
     def translate_action(self, action):
         action_name = action['action'] # str
         action_args = action['params'] # list[str]
@@ -138,14 +141,18 @@ class iGibsonSemanticActionEnv(ABC):
         return sim_env_action
     
     def get_state_and_image(self):
-        return self._finish_action()
+        image, symbolic_state = self._finish_action()
+        # Translate back to pddl convention
+        translated_symbolic_state = self.translate_symbolic_state(symbolic_state)
+        return image, translated_symbolic_state
         
     def go_to(self, obj_name): 
         # Check that object exist
         if obj_name not in self.env.task.object_scope:
             print(f"Object {obj_name} not in task object scope.")
             image, symbolic_state = self._finish_action()
-            return False, image, symbolic_state
+            legal = False
+            return legal, "not legal", image, symbolic_state
 
         # Enforce preconditions: don't navigate to things hidden in a closed container
         # Skip, the action is going to fail gracefully in case anyways
@@ -166,42 +173,52 @@ class iGibsonSemanticActionEnv(ABC):
             success = False
             image, symbolic_state = self._finish_action(do_physics_steps=True)
 
-        return success, image, symbolic_state
+        # Last sanity check
+        if not symbolic_state['reachable'][obj_name]:
+            success = False
+            
+        if success:
+            info = 'success'
+        else:
+            info = 'executed but failed'
+        legal = True
+        return legal, info, image, symbolic_state
         
     def open(self, obj_name, **kwargs): 
         # Check that object exist
         if obj_name not in self.env.task.object_scope:
             print(f"Object {obj_name} not in task object scope.")
             image, symbolic_state = self._finish_action()
-            return False, image, symbolic_state
+            legal = False
+            return legal, "not legal", image, symbolic_state
 
         container_obj = self.env.task.object_scope[obj_name] 
         
         # Enforce preconditions: reachable, not open, empty_hand
-        if self.verbose:
-            distance_from_container = self._get_obj_distance_from_robot(container_obj)
-            print("distance_from_container: ", distance_from_container)
-            is_near = distance_from_container < self.ROBOT_DISTANCE_THRESHOLD
-            print("is_near: ", is_near)
-            _is_near = self._is_near(obj_name)
-            print("_is_near: ", _is_near)
-
-            # Visibility sanity check
-            total_visible_pixels = container_obj.states[object_states.VisiblePixelCountFromRobot].get_value()
-            print("total_visible_pixels: ", total_visible_pixels)
-            bbox_vertices_uv = render_utils.get_bbox_vertices_uv(self.env, container_obj)
-            print("bbox_vertices_uv: ", bbox_vertices_uv)
-            # Clip vertices within image bounds
-            H = self.env.config['image_height']
-            W = self.env.config['image_width']
-            
-            projected_bbox_pixels = compute_projected_area(bbox_vertices_uv, H, W)
-            print("projected_bbox_pixels: ", projected_bbox_pixels)
-            ratio = total_visible_pixels / (projected_bbox_pixels + 1)
-            print("ratio: ", ratio)
-            print("threshold: ", 0.08)
-            is_visible = self._is_visible(obj_name)
-            print("is_visible: ", is_visible)
+        #if self.verbose:
+        #    distance_from_container = self._get_obj_distance_from_robot(container_obj)
+        #    print("distance_from_container: ", distance_from_container)
+        #    is_near = distance_from_container < self.ROBOT_DISTANCE_THRESHOLD
+        #    print("is_near: ", is_near)
+        #    _is_near = self._is_near(obj_name)
+        #    print("_is_near: ", _is_near)
+        #
+        #    # Visibility sanity check
+        #    total_visible_pixels = container_obj.states[object_states.VisiblePixelCountFromRobot].get_value()
+        #    print("total_visible_pixels: ", total_visible_pixels)
+        #    bbox_vertices_uv = render_utils.get_bbox_vertices_uv(self.env, container_obj)
+        #    print("bbox_vertices_uv: ", bbox_vertices_uv)
+        #    # Clip vertices within image bounds
+        #    H = self.env.config['image_height']
+        #    W = self.env.config['image_width']
+        #    
+        #    projected_bbox_pixels = compute_projected_area(bbox_vertices_uv, H, W)
+        #    print("projected_bbox_pixels: ", projected_bbox_pixels)
+        #    ratio = total_visible_pixels / (projected_bbox_pixels + 1)
+        #    print("ratio: ", ratio)
+        #    print("threshold: ", 0.08)
+        #    is_visible = self._is_visible(obj_name)
+        #    print("is_visible: ", is_visible)
             
         reachable = self._is_reachable(obj_name)
         is_open = self._is_open(obj_name)
@@ -209,7 +226,8 @@ class iGibsonSemanticActionEnv(ABC):
         if not reachable or is_open or not empty_hand:
             print(f"Preconditions not satisfied. reachable={reachable} ; is_open={is_open} ; empty_hand={empty_hand}")
             image, symbolic_state = self._finish_action()
-            return False, image, symbolic_state
+            legal = False
+            return legal, "not legal", image, symbolic_state
 
         # Execute action
         success = open_and_make_all_obj_visible(
@@ -223,43 +241,53 @@ class iGibsonSemanticActionEnv(ABC):
         
         if success and self.debug:
             assert symbolic_state['open'][obj_name] == True, "Action succeeded but target object is not open!"
-            
-        return success, image, symbolic_state
+
+        # Last sanity check
+        if not symbolic_state['open'][obj_name]:
+            success = False
+
+        if success:
+            info = 'success'
+        else:
+            info = 'executed but failed'
+        legal = True
+        return legal, info, image, symbolic_state
 
     def close(self, obj_name): 
         # Check that object exist
         if obj_name not in self.env.task.object_scope:
             print(f"Object {obj_name} not in task object scope.")
             image, symbolic_state = self._finish_action()
-            return False, image, symbolic_state
+            legal = False
+            return legal, "not legal", image, symbolic_state
 
         container_obj = self.env.task.object_scope[obj_name] 
 
-        if self.verbose:
-            # Distance sanity check
-            distance_from_container = self._get_obj_distance_from_robot(container_obj)
-            print("distance_from_container: ", distance_from_container)
-            is_near = distance_from_container < self.ROBOT_DISTANCE_THRESHOLD
-            print("is_near: ", is_near)
-            _is_near = self._is_near(obj_name)
-            print("_is_near: ", _is_near)
-
-            # Visibility sanity check
-            total_visible_pixels = container_obj.states[object_states.VisiblePixelCountFromRobot].get_value()
-            print("total_visible_pixels: ", total_visible_pixels)
-            bbox_vertices_uv = render_utils.get_bbox_vertices_uv(self.env, container_obj)
-            print("bbox_vertices_uv: ", bbox_vertices_uv)
-            # Clip vertices within image bounds
-            H = self.env.config['image_height']
-            W = self.env.config['image_width']
-            
-            projected_bbox_pixels = compute_projected_area(bbox_vertices_uv, H, W)
-            print("projected_bbox_pixels: ", projected_bbox_pixels)
-            ratio = total_visible_pixels / (projected_bbox_pixels + 1)
-            print("ratio: ", ratio)
-            print("threshold: ", 0.08)
-            is_visible = self._is_visible(obj_name)
-            print("is_visible: ", is_visible)
+        #if self.verbose:
+        #    # Distance sanity check
+        #    distance_from_container = self._get_obj_distance_from_robot(container_obj)
+        #    print("distance_from_container: ", distance_from_container)
+        #    is_near = distance_from_container < self.ROBOT_DISTANCE_THRESHOLD
+        #    print("is_near: ", is_near)
+        #    _is_near = self._is_near(obj_name)
+        #    print("_is_near: ", _is_near)
+        #
+        #    # Visibility sanity check
+        #    total_visible_pixels = container_obj.states[object_states.VisiblePixelCountFromRobot].get_value()
+        #    print("total_visible_pixels: ", total_visible_pixels)
+        #    bbox_vertices_uv = render_utils.get_bbox_vertices_uv(self.env, container_obj)
+        #    print("bbox_vertices_uv: ", bbox_vertices_uv)
+        #    # Clip vertices within image bounds
+        #    H = self.env.config['image_height']
+        #    W = self.env.config['image_width']
+        #    
+        #    projected_bbox_pixels = compute_projected_area(bbox_vertices_uv, H, W)
+        #    print("projected_bbox_pixels: ", projected_bbox_pixels)
+        #    ratio = total_visible_pixels / (projected_bbox_pixels + 1)
+        #    print("ratio: ", ratio)
+        #    print("threshold: ", 0.08)
+        #    is_visible = self._is_visible(obj_name)
+        #    print("is_visible: ", is_visible)
             
         # Enforce preconditions: reachable, open, empty_hand
         reachable = self._is_reachable(obj_name)
@@ -268,7 +296,8 @@ class iGibsonSemanticActionEnv(ABC):
         if not reachable or not is_open or not empty_hand:
             print(f"Preconditions not satisfied. reachable={reachable} ; is_open={is_open} ; empty_hand={empty_hand}")
             image, symbolic_state = self._finish_action()
-            return False, image, symbolic_state
+            legal = False
+            return legal, "not legal", image, symbolic_state
         
         # Execute action
         success = close_container(
@@ -280,8 +309,17 @@ class iGibsonSemanticActionEnv(ABC):
         
         if success and self.debug:
             assert symbolic_state['open'][obj_name] == False, "Action succeeded but target object is not closed!"
+
+        # Last sanity check
+        if symbolic_state['open'][obj_name]: # should be False, i.e. closed
+            success = False
             
-        return success, image, symbolic_state
+        if success:
+            info = 'success'
+        else:
+            info = 'executed but failed'
+        legal = True
+        return legal, info, image, symbolic_state
         
     def place_inside(self, trg_obj_name, container_obj_name):
         # Check that objects exist
@@ -289,7 +327,8 @@ class iGibsonSemanticActionEnv(ABC):
             if obj_name not in self.env.task.object_scope:
                 print(f"Object {obj_name} not in task object scope.")
                 image, symbolic_state = self._finish_action()
-                return False, image, symbolic_state
+                legal = False
+                return legal, "not legal", image, symbolic_state
 
         trg_obj = self.env.task.object_scope[trg_obj_name]
         container_obj = self.env.task.object_scope[container_obj_name]
@@ -301,7 +340,8 @@ class iGibsonSemanticActionEnv(ABC):
         if not reachable or not is_open or not holding_trg_obj:
             print(f"Preconditions not satisfied. reachable={reachable} ; is_open={is_open} ; holding_trg_obj={holding_trg_obj}")
             image, symbolic_state = self._finish_action()
-            return False, image, symbolic_state
+            legal = False
+            return legal, "not legal", image, symbolic_state
 
         # Release the object
         for i, action in enumerate(self._release_grasp()):
@@ -315,7 +355,9 @@ class iGibsonSemanticActionEnv(ABC):
             if self.verbose:
                 print(f"Unable to release {trg_obj_name} for place-inside action.")
             image, symbolic_state = self._finish_action()
-            return False, image, symbolic_state
+            legal = True
+            info = 'executed but failed'
+            return legal, info, image, symbolic_state
         
         success = place_until_visible(
             self, trg_obj, container_obj, max_distance_from_shoulder=self.ROBOT_DISTANCE_THRESHOLD,
@@ -328,8 +370,17 @@ class iGibsonSemanticActionEnv(ABC):
 
         if success and self.debug:
             assert symbolic_state['inside'][f'{trg_obj_name},{container_obj_name}'] == True, "Action succeeded but target object is not inside container object!"
+
+        # Last sanity check
+        if not symbolic_state['inside'][f'{trg_obj_name},{container_obj_name}']:
+            success = False
             
-        return success, image, symbolic_state
+        if success:
+            info = 'success'
+        else:
+            info = 'executed but failed'
+        legal = True
+        return legal, info, image, symbolic_state
 
     def place_on_top(self, trg_obj_name, container_obj_name):
         # Check that objects exist
@@ -337,7 +388,8 @@ class iGibsonSemanticActionEnv(ABC):
             if obj_name not in self.env.task.object_scope:
                 print(f"Object {obj_name} not in task object scope.")
                 image, symbolic_state = self._finish_action()
-                return False, image, symbolic_state
+                legal = False
+                return legal, "not legal", image, symbolic_state
 
         trg_obj = self.env.task.object_scope[trg_obj_name]
         container_obj = self.env.task.object_scope[container_obj_name]
@@ -348,7 +400,8 @@ class iGibsonSemanticActionEnv(ABC):
         if not holding_trg_obj or not bottom_obj_reachable:
             print(f"Preconditions not satisfied. holding_trg_obj={holding_trg_obj} ; bottom_obj_reachable={bottom_obj_reachable}")
             image, symbolic_state = self._finish_action()
-            return False, image, symbolic_state
+            legal = False
+            return legal, "not legal", image, symbolic_state
 
         # Release the object
         for i, action in enumerate(self._release_grasp()):
@@ -362,7 +415,9 @@ class iGibsonSemanticActionEnv(ABC):
             if self.verbose:
                 print(f"Unable to release {trg_obj_name} for place-on-top action.")
             image, symbolic_state = self._finish_action()
-            return False, image, symbolic_state
+            legal = True
+            info = 'executed but failed'
+            return legal, info, image, symbolic_state
 
         # Does this always work at the first shot?
         candidate_pos = sample_point_on_top(container_obj)
@@ -380,7 +435,19 @@ class iGibsonSemanticActionEnv(ABC):
         if self.debug:
             assert symbolic_state['ontop'][f'{trg_obj_name},{container_obj_name}'] == True, "Action succeeded but target object is not on top of the container object!"
 
-        return True, image, symbolic_state
+        # Last sanity check
+        if not symbolic_state['ontop'][f'{trg_obj_name},{container_obj_name}']:
+            success = False
+        else:
+            # If it made it so far, it's considered successful
+            success = True
+            
+        if success:
+            info = 'success'
+        else:
+            info = 'executed but failed'
+        legal = True
+        return legal, info, image, symbolic_state
 
     def place_next_to(self, trg_obj_name, container_obj_name):
         # Check that objects exist
@@ -388,7 +455,8 @@ class iGibsonSemanticActionEnv(ABC):
             if obj_name not in self.env.task.object_scope:
                 print(f"Object {obj_name} not in task object scope.")
                 image, symbolic_state = self._finish_action()
-                return False, image, symbolic_state
+                legal = False
+                return legal, "not legal", image, symbolic_state
 
         trg_obj = self.env.task.object_scope[trg_obj_name]
         container_obj = self.env.task.object_scope[container_obj_name]
@@ -399,7 +467,8 @@ class iGibsonSemanticActionEnv(ABC):
         if not reachable or not holding_trg_obj:
             print(f"Preconditions not satisfied. holding_trg_obj={holding_trg_obj} ; reachable={reachable}")
             image, symbolic_state = self._finish_action()
-            return False, image, symbolic_state
+            legal = False
+            return legal, "not legal", image, symbolic_state
 
         # Release the object
         for i, action in enumerate(self._release_grasp()):
@@ -413,7 +482,9 @@ class iGibsonSemanticActionEnv(ABC):
             if self.verbose:
                 print(f"Unable to release {trg_obj_name} for place-on-top action.")
             image, symbolic_state = self._finish_action()
-            return False, image, symbolic_state
+            legal = True
+            info = 'executed but failed'
+            return legal, info, image, symbolic_state
 
         success = sample_until_next_to(
             self, trg_obj, container_obj, max_distance=self.ROBOT_DISTANCE_THRESHOLD, 
@@ -426,8 +497,17 @@ class iGibsonSemanticActionEnv(ABC):
 
         if success and self.debug:
             assert symbolic_state['nextto'][f'{trg_obj_name},{container_obj_name}'] == True, "Action succeeded but target object is not on top of the other object!"
+
+        # Last sanity check
+        if not symbolic_state['nextto'][f'{trg_obj_name},{container_obj_name}']:
+            success = False
             
-        return success, image, symbolic_state
+        if success:
+            info = 'success'
+        else:
+            info = 'executed but failed'
+        legal = True
+        return legal, info, image, symbolic_state
         
     def grasp(self, obj_name, forward_downward_dir=None, camera_offset=None, distance_from_camera=0.2, sample_budget=20):
         """
@@ -438,7 +518,8 @@ class iGibsonSemanticActionEnv(ABC):
         if obj_name not in self.env.task.object_scope:
             print(f"Object {obj_name} not in task object scope.")
             image, symbolic_state = self._finish_action()
-            return False, image, symbolic_state
+            legal = False
+            return legal, "not legal", image, symbolic_state
         
         # Enforce preconditions: reachable and nothing in hand
         reachable = self._is_reachable(obj_name)
@@ -446,7 +527,8 @@ class iGibsonSemanticActionEnv(ABC):
         if not reachable or not empty_hand:
             print(f"Preconditions not satisfied. reachable({obj_name})={reachable} ; empty_hand()={empty_hand}")
             image, symbolic_state = self._finish_action()
-            return False, image, symbolic_state
+            legal = False
+            return legal, "not legal", image, symbolic_state
 
         trg_obj = self.env.task.object_scope[obj_name]
         
@@ -534,24 +616,29 @@ class iGibsonSemanticActionEnv(ABC):
             )
     
             last_image, last_state = img, state
+            
             if success:
-                if self.verbose:
-                    print(f"Grasp succeeded on attempt {attempt}.")
-                    
                 # Double check for debugging
                 if self.verbose: 
+                    print(f"Grasp succeeded on attempt {attempt}.")
                     print("Holding predicates: ", last_state['holding'])
                 if self.debug:
                     assert last_state['holding'][obj_name] == True, "Action succeeded but target object is not in hand!"
-            
-                return True, img, last_state
+
+                legal = True
+                info = 'success'
+                return legal, info, img, last_state
             else:
                 if self.verbose:
                     print(f"Grasp failed on attempt {attempt}, retrying next sample.")
+                    
         # All attempts failed
         if self.verbose:
             print("All grasp attempts failed.")
-        return False, last_image, last_state
+            
+        info = 'executed but failed'
+        legal = True
+        return legal, info, image, symbolic_state
     
     
     def _attempt_grasp_once(
@@ -656,6 +743,36 @@ class iGibsonSemanticActionEnv(ABC):
 
         return state
 
+    def translate_symbolic_state(self, symbolic_state):
+
+        def bddl_to_pddl(obj_name_bddl):
+            # obj_name.n.0x_y -> obj_name_y
+            prefix = obj_name_bddl.split('.')[0] # obj_name
+            suffix = obj_name_bddl.split('_')[-1] # y
+            obj_name_pddl = f"{prefix}_{suffix}" # obj_name_y
+            return obj_name_pddl
+
+        translated_symbolic_state = {}
+        # First level contains predicate names, e.g. 'reachable' and 'ontop'
+        for pred in symbolic_state.keys():
+            translated_symbolic_state[pred] = {}
+            # Second level contains one or two (comma separated) object names 
+            # for unary and binary predicates respectively
+            for arg in symbolic_state[pred].keys():
+                if ',' in arg:
+                    # Binary predicates case
+                    a, b = arg.split(',')
+                    a_new = bddl_to_pddl(a)
+                    b_new = bddl_to_pddl(b)
+
+                    # Store value in new dict
+                    translated_symbolic_state[f"{a_new},{b_new}"] = symbolic_state[pred][arg]
+                else:
+                    # Unary predicate case
+                    arg_new = bddl_to_pddl(arg)
+                    translated_symbolic_state[arg_new] = symbolic_state[pred][arg]
+        return translated_symbolic_state
+                    
     def _get_task_objects(self):
         return get_task_objects(self.env)
         
