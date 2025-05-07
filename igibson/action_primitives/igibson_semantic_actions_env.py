@@ -706,7 +706,7 @@ class iGibsonSemanticActionEnv(ABC):
             #'is_visible':   self._is_visible,
             'reachable': self._is_reachable,
             'holding':   self._is_holding,
-            'is_movable':   self._is_movable,
+            #'is_movable':   self._is_movable,
             #'is_openable':  self._is_openable,
             'open':      self._is_open,
         }
@@ -766,11 +766,11 @@ class iGibsonSemanticActionEnv(ABC):
                     b_new = bddl_to_pddl(b)
 
                     # Store value in new dict
-                    translated_symbolic_state[f"{a_new},{b_new}"] = symbolic_state[pred][arg]
+                    translated_symbolic_state[pred][f"{a_new},{b_new}"] = symbolic_state[pred][arg]
                 else:
                     # Unary predicate case
                     arg_new = bddl_to_pddl(arg)
-                    translated_symbolic_state[arg_new] = symbolic_state[pred][arg]
+                    translated_symbolic_state[pred][arg_new] = symbolic_state[pred][arg]
         return translated_symbolic_state
                     
     def _get_task_objects(self):
