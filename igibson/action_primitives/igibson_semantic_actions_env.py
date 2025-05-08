@@ -20,7 +20,7 @@ from igibson.custom_utils import get_env_config
 # Only for debugging
 from igibson.object_states.robot_related_states import compute_projected_area
 
-MAX_ATTEMPTS_FOR_SAMPLING_POSE_NEAR_OBJECT = 120
+MAX_ATTEMPTS_FOR_SAMPLING_POSE_NEAR_OBJECT = 160
 PHYSICS_STEPS = 3
 GUARANTEED_GRASPABLE_WIDTH = 0.18
 
@@ -256,7 +256,97 @@ class iGibsonSemanticActionEnv(ABC):
             info = 'executed but failed'
         legal = True
         return legal, info, image, symbolic_state
-
+    
+    def reset_robot_pose(self):
+        # Reset the robot pose
+        self.robot.reset()
+        self.robot.keep_still()
+        image, symbolic_state = self._finish_action(do_physics_steps=True)
+        return image, symbolic_state
+        
+#    def close(self, obj_name, outer_attempts=5):
+#        # Check that object exist
+#        if obj_name not in self.env.task.object_scope:
+#            print(f"Object {obj_name} not in task object scope.")
+#            image, symbolic_state = self._finish_action()
+#            legal = False
+#            return legal, "not legal", image, symbolic_state
+#
+#        container_obj = self.env.task.object_scope[obj_name] 
+#
+#        for i in range(outer_attempts):
+#            robot_distance = self._get_obj_distance_from_robot(container_obj)
+#            # Enforce preconditions: reachable, open, empty_hand
+#            reachable = self._is_reachable(obj_name)
+#            is_open = self._is_open(obj_name)
+#            empty_hand = self._get_obj_in_hand() is None
+#            if not reachable or not is_open or not empty_hand:
+#                print(f"Preconditions not satisfied. reachable={reachable} ; is_open={is_open} ; empty_hand={empty_hand}")
+#                image, symbolic_state = self._finish_action()
+#                legal = False
+#                return legal, "not legal", image, symbolic_state
+#            
+#            # Execute action
+#            if self.debug:
+#                print(f"attempt {i} at closing")
+#            success = close_container(
+#                self,
+#                container_obj,
+#                debug=self.verbose,
+#            )
+#            image, symbolic_state = self._finish_action()
+#
+#            if success and self.debug:
+#                is_visible = self._is_visible(obj_name)
+#                print(obj_name, "is_visible: ", is_visible)
+#                
+#            if symbolic_state['open'][obj_name]:
+#                if self.debug:
+#                    image.show()
+#                    print(f"Attempt {i}: Action succeeded but target object is not closed!")
+#                if i < outer_attempts - 1:
+#                    pose_2d = self._sample_pose_near_object(container_obj, min_dist=1.25 * robot_distance)
+#                    if self.debug:
+#                        print(f"Attempt {i}: container is still open, trying to reset robot position to {pose_2d}...")
+#                    if pose_2d is not None:
+#                        self.robot.set_position_orientation(*self._get_robot_pose_from_2d_pose(pose_2d))
+#                        success = True
+#                        image, symbolic_state = self._finish_action(do_physics_steps=True)
+#
+#                        if self.debug:
+#                            image.show()
+#                            if not symbolic_state['reachable'][obj_name]:
+#                                print("Go-to action succeeded but target object is not reachable!")
+#            else:
+#                # Successfully closed
+#                break
+#                
+#        # Reset the robot pose
+#        image, symbolic_state = self.reset_robot_pose()
+#
+#        is_visible = self._is_visible(obj_name)
+#        if not is_visible:
+#            pose_2d = self._sample_pose_near_object(container_obj)
+#            if self.debug:
+#                print(f"container is not visible, trying to reset robot position to {pose_2d}...")
+#            if pose_2d is not None:
+#                self.robot.set_position_orientation(*self._get_robot_pose_from_2d_pose(pose_2d))
+#                success = True
+#                image, symbolic_state = self._finish_action(do_physics_steps=True)
+#            is_visible = self._is_visible(obj_name)
+#            print(obj_name, "is_visible now: ", is_visible)
+#
+#        # Last sanity check
+#        if symbolic_state['open'][obj_name]: # should be False, i.e. closed
+#            success = False
+#            
+#        if success:
+#            info = 'success'
+#        else:
+#            info = 'executed but failed'
+#        legal = True
+#        return legal, info, image, symbolic_state
+        
     def close(self, obj_name): 
         # Check that object exist
         if obj_name not in self.env.task.object_scope:
@@ -874,17 +964,21 @@ class iGibsonSemanticActionEnv(ABC):
         else:
             grasp_pose, object_direction = random.choice(grasp_poses)
         return grasp_pose, object_direction
-        
-    def _sample_pose_near_object(self, obj):
+    def _sample_pose_near_object(self, obj, min_dist=None):
         object_center, orientation = obj.get_position_orientation()
-
+        #orientation = patch_orientation_for_certain_obj(orientation, obj)
+        
         # Gradually expand the search with the budget
-        yaw_ranges = [45, 60, 90]
-        min_distances = [0.6, 0.5, 0.4]
-        max_distances = [0.9, 1.1, 1.3]
+        yaw_ranges = [45, 60, 90, 180]
+        min_distances = [0.6, 0.5, 0.4, 0.4]
+        max_distances = [0.9, 1.1, 1.3, 1.3]
         
         for yaw_range, min_distance, max_distance in zip(yaw_ranges, min_distances, max_distances):
-            sampling_budget = MAX_ATTEMPTS_FOR_SAMPLING_POSE_NEAR_OBJECT//3
+            sampling_budget = MAX_ATTEMPTS_FOR_SAMPLING_POSE_NEAR_OBJECT//4
+            
+            if min_dist is not None:
+                min_distance = min(min_dist, min_distance)
+                
             # Pseudo-random efficient sampler
             sampler = AnnularSampler(
                 center=object_center,
@@ -1020,16 +1114,22 @@ class iGibsonSemanticActionEnv(ABC):
         if not isinstance(name, str) or '_' not in name:
             raise ValueError(f"Invalid format for name '{name}'. Expected format like 'prefix_suffix'.")
     
-        try:
-            prefix, suffix_part = name.split('_', 1)
-        except ValueError:
-            raise ValueError(f"Invalid format for name '{name}'. Expected exactly one underscore.")
+        parts = name.split('_')
+        if len(parts) < 2:
+            raise ValueError(f"Invalid format for name '{name}'. Expected at least one underscore.")
     
-        suffix = '_' + suffix_part
-    
+        if len(parts)==2:
+            prefix = parts[0]
+            suffix = '_'+parts[1]
+        elif len(parts)>2:
+            prefix = '_'.join(parts[:-1])
+            suffix = '_'+parts[-1]
+
+        print(f"prefix {prefix} - suffix {suffix}")
         filtered_object_names = [obj_name for obj_name in object_names if prefix in obj_name]
+        print("filtered_object_names ", filtered_object_names)
         matches = [obj_name for obj_name in filtered_object_names if suffix in obj_name]
-    
+        print("matches ", matches)
         if len(matches) != 1:
             raise ValueError(
                 f"Found {len(matches)} matches for '{name}' in object names, expected exactly one. "
@@ -1037,21 +1137,6 @@ class iGibsonSemanticActionEnv(ABC):
             )
     
         return matches[0]
-    
-    #@staticmethod
-    #def match_name_to_sim_env(name, object_names):
-    #    # Match prefix
-    #    prefix = name.split('_')[0]
-    #    filtered_object_names = [obj_name for obj_name in object_names if prefix in obj_name]
-    #    
-    #    # Match suffix
-    #    suffix = '_'+name.split('_')[1]
-    #    matches = [obj_name for obj_name in filtered_object_names if suffix in obj_name]
-    #
-    #    # Assert uniqueness
-    #    assert len(matches) == 1, f"Too many or too little matches ({len(matches)}), expected only 1."
-    #    # Return only match
-    #    return matches[0]
 
 # Helper class to sample efficiently positions to navigate to
 class AnnularSampler:
@@ -1119,3 +1204,33 @@ class AnnularSampler:
         pos = self._point_from_yaw_and_distance(yaw, distance)
         yaw_rad = np.arctan2(self.center[1] - pos[1], self.center[0] - pos[0])
         return np.array([pos[0], pos[1], yaw_rad])
+
+#def patch_orientation_for_certain_obj(orientation, obj):
+#    name = obj.bddl_object_scope
+#    
+#    if 'window' in name:
+#
+#        if name == 'window.n.01_1':
+#            rot = 0
+#        elif name == "window.n.01_2":
+#            rot = 180
+#        elif name == "window.n.01_3":
+#            rot = -90
+#        elif name == "window.n.01_4":
+#            rot = 0
+#        else:
+#            pass
+#            
+#        local_forward = [0,1,0]
+#        local_yaw_rot = Rotation.from_euler('z', rot).apply(local_forward)
+#        
+#        def wxyz_to_xyzw(q):
+#            return [q[1], q[2], q[3], q[0]]
+#
+#        def xyzw_to_wxyz(q):
+#            return [q[-1], q[0], q[1], q[2]]
+#        
+#        orientation_xyzw = wxyz_to_xyzw(orientation)
+#        orientation_xyzw = p.rotateVector(orientation_xyzw, local_yaw_rot)
+#        orientation = xyzw_to_wxyz(orientation_xyzw)
+#        return orientation
