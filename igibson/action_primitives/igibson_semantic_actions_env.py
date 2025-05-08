@@ -253,7 +253,7 @@ class iGibsonSemanticActionEnv(ABC):
         legal = True
         return legal, info, image, symbolic_state
 
-    def close(self, obj_name): 
+    def close(self, obj_name, outer_attempts=5):
         # Check that object exist
         if obj_name not in self.env.task.object_scope:
             print(f"Object {obj_name} not in task object scope.")
@@ -288,27 +288,50 @@ class iGibsonSemanticActionEnv(ABC):
         #    print("threshold: ", 0.08)
         #    is_visible = self._is_visible(obj_name)
         #    print("is_visible: ", is_visible)
+
+        for i in range(outer_attempts):
+            # Enforce preconditions: reachable, open, empty_hand
+            reachable = self._is_reachable(obj_name)
+            is_open = self._is_open(obj_name)
+            empty_hand = self._get_obj_in_hand() is None
+            if not reachable or not is_open or not empty_hand:
+                print(f"Preconditions not satisfied. reachable={reachable} ; is_open={is_open} ; empty_hand={empty_hand}")
+                image, symbolic_state = self._finish_action()
+                legal = False
+                return legal, "not legal", image, symbolic_state
             
-        # Enforce preconditions: reachable, open, empty_hand
-        reachable = self._is_reachable(obj_name)
-        is_open = self._is_open(obj_name)
-        empty_hand = self._get_obj_in_hand() is None
-        if not reachable or not is_open or not empty_hand:
-            print(f"Preconditions not satisfied. reachable={reachable} ; is_open={is_open} ; empty_hand={empty_hand}")
+            # Execute action
+            if self.debug:
+                print(f"attempt {i} at closing")
+            success = close_container(
+                self,
+                container_obj,
+                debug=self.verbose,
+            )
             image, symbolic_state = self._finish_action()
-            legal = False
-            return legal, "not legal", image, symbolic_state
-        
-        # Execute action
-        success = close_container(
-            self,
-            container_obj,
-            debug=self.verbose,
-        )
-        image, symbolic_state = self._finish_action()
-        
-        if success and self.debug:
-            assert symbolic_state['open'][obj_name] == False, "Action succeeded but target object is not closed!"
+
+            if success and self.debug:
+                is_visible = self._is_visible(obj_name)
+                print(obj_name, "is_visible: ", is_visible)
+            if symbolic_state['open'][obj_name]:
+                if self.debug:
+                    image.show()
+                    print(f"Attempt {i}: Action succeeded but target object is not closed!")
+                if i < outer_attempts - 1:
+                    pose_2d = self._sample_pose_near_object(container_obj)
+                    if self.debug:
+                        print(f"Attempt {i}: container is still open, trying to reset robot position to {pose_2d}...")
+                    if pose_2d is not None:
+                        self.robot.set_position_orientation(*self._get_robot_pose_from_2d_pose(pose_2d))
+                        success = True
+                        image, symbolic_state = self._finish_action(do_physics_steps=True)
+
+                        if self.debug:
+                            image.show()
+                            if not symbolic_state['reachable'][obj_name]:
+                                print("Go-to action succeeded but target object is not reachable!")
+            else:
+                break
 
         # Last sanity check
         if symbolic_state['open'][obj_name]: # should be False, i.e. closed
