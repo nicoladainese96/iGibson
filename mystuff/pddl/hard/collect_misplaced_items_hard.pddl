@@ -7,8 +7,6 @@
         notebook_1 - movable
         table_1 table_2 - object
         cabinet_1 - container
-        sofa_1 - object
-        floor_1 floor_2 - object
     )
     
     (:init 

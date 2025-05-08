@@ -126,33 +126,39 @@
     (:action navigate-to
         :parameters (?o - object)
         :precondition (and
-                        (not (reachable ?o))
-                        ;; don’t navigate-to things hidden in a closed container
-                        (not (exists (?c - container)
-                                (and (inside ?o ?c) 
-                                     (not (open ?c)))
-                             )
-                        )
-                      )
+            (not (reachable ?o))
+            ;; don’t navigate-to things hidden in a closed container
+            (forall
+                (?c - container)
+                (not
+                  (and
+                    (inside ?o ?c)
+                    (not (open ?c))
+                  )
+    )
+            )
+        )
         :effect (and
             (reachable ?o) ;; make target object reachable
 
             ;; Make every other object unreachable - ok
-            (forall (?x - object)
+            (forall
+                (?x - object)
                 (when
                     (not (= ?x ?o)) ;; condition
                     (not (reachable ?x)))) ;; effect
 
             ;; Also, if there exists a container which is ?o and that it's open,
             ;; set the objects inside as reachable
-            (forall (?c - container ?x - object)
-              (when 
-                (and
-                  (= ?c ?o)
-                  (open ?c)
-                  (inside ?x ?c)
-                )
-                (reachable ?x)))
+            (forall
+                (?c - container ?x - object)
+                (when
+                    (and
+                        (= ?c ?o)
+                        (open ?c)
+                        (inside ?x ?c)
+                    )
+                    (reachable ?x)))
 
             ;; If ?o is inside a container (which is open because of the preconditions), 
             ;; mark the container and all the objects inside as reachable
@@ -176,9 +182,9 @@
             (reachable ?o)
             (not (sliced ?o))
         )
-        :effect (and 
+        :effect (and
             (sliced ?o)
         )
     )
-    
+
 )

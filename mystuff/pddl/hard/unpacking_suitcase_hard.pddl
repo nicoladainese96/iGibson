@@ -2,7 +2,6 @@
     (:domain igibson)
 
     (:objects
-    	floor_1 - object
         carton_1 - container
         perfume_1 - movable
         toothbrush_1 - movable

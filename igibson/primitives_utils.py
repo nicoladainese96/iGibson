@@ -363,8 +363,18 @@ def open_and_make_all_obj_visible(
     max_distance_from_shoulder=1.0,
     debug=False
 ):
-    assert container_obj.states[object_states.Open].get_value() == False, "Container should be closed to use this action!"
 
+    # Before   
+    #assert container_obj.states[object_states.Open].get_value() == False, "Container should be closed to use this action!"
+
+    if object_states.Open in container_obj.states:
+        if container_obj.states[object_states.Open].get_value() == False:
+            # Container is still closed, cannot possibly work
+            return False  
+    else:
+        # Open state not present; assume it's not usable
+        return False
+    
     # Define controller - used to compute distances from robot shoulder - could be streamlined further as the full controller is not needed
     #controller = get_controller(env)
     

@@ -124,8 +124,11 @@ class iGibsonSemanticActionEnv(ABC):
         action_name = action['action'] # str
         action_args = action['params'] # list[str]
         
-        # Translate action_name
-        translated_action_name = self.SIM_ENV_ACTION_NAMES[action_name]
+        # Translate action_name with error handling
+        try:
+            translated_action_name = self.SIM_ENV_ACTION_NAMES[action_name]
+        except KeyError:
+            raise ValueError(f"Unknown action name: '{action_name}'. Valid actions are: {list(self.SIM_ENV_ACTION_NAMES.keys())}")
         
         # Process action arguments
 
@@ -221,9 +224,10 @@ class iGibsonSemanticActionEnv(ABC):
         #    print("is_visible: ", is_visible)
             
         reachable = self._is_reachable(obj_name)
+        is_openable = self._is_openable(obj_name)
         is_open = self._is_open(obj_name)
         empty_hand = self._get_obj_in_hand() is None
-        if not reachable or is_open or not empty_hand:
+        if not reachable or not is_openable or is_open or not empty_hand:
             print(f"Preconditions not satisfied. reachable={reachable} ; is_open={is_open} ; empty_hand={empty_hand}")
             image, symbolic_state = self._finish_action()
             legal = False
@@ -609,13 +613,11 @@ class iGibsonSemanticActionEnv(ABC):
                 print(f"grasp_pose: {grasp_pose} - object_direction: {obj_dir}")
             
             # Run one grasp trial
-            success, img, state = self._attempt_grasp_once(
+            success, last_image, last_state = self._attempt_grasp_once(
                 trg_obj, target_obj_pos, grasp_pose, obj_dir,
                 forward_downward_dir, camera_offset,
                 distance_from_camera
             )
-    
-            last_image, last_state = img, state
             
             if success:
                 # Double check for debugging
@@ -627,7 +629,7 @@ class iGibsonSemanticActionEnv(ABC):
 
                 legal = True
                 info = 'success'
-                return legal, info, img, last_state
+                return legal, info, last_image, last_state
             else:
                 if self.verbose:
                     print(f"Grasp failed on attempt {attempt}, retrying next sample.")
@@ -635,10 +637,14 @@ class iGibsonSemanticActionEnv(ABC):
         # All attempts failed
         if self.verbose:
             print("All grasp attempts failed.")
+
+        if last_image is None or last_state is None:
+            print("[Warning] All grasp attempts failed and no image/state was returned; falling back to _finish_action.")
+            last_image, last_state = self._finish_action()
             
         info = 'executed but failed'
         legal = True
-        return legal, info, image, symbolic_state
+        return legal, info, last_image, last_state
     
     
     def _attempt_grasp_once(
@@ -1011,18 +1017,41 @@ class iGibsonSemanticActionEnv(ABC):
 
     @staticmethod
     def match_name_to_sim_env(name, object_names):
-        # Match prefix
-        prefix = name.split('_')[0]
+        if not isinstance(name, str) or '_' not in name:
+            raise ValueError(f"Invalid format for name '{name}'. Expected format like 'prefix_suffix'.")
+    
+        try:
+            prefix, suffix_part = name.split('_', 1)
+        except ValueError:
+            raise ValueError(f"Invalid format for name '{name}'. Expected exactly one underscore.")
+    
+        suffix = '_' + suffix_part
+    
         filtered_object_names = [obj_name for obj_name in object_names if prefix in obj_name]
-        
-        # Match suffix
-        suffix = '_'+name.split('_')[1]
         matches = [obj_name for obj_name in filtered_object_names if suffix in obj_name]
-
-        # Assert uniqueness
-        assert len(matches) == 1, f"Too many or too little matches ({len(matches)}), expected only 1."
-        # Return only match
+    
+        if len(matches) != 1:
+            raise ValueError(
+                f"Found {len(matches)} matches for '{name}' in object names, expected exactly one. "
+                f"Matches: {matches}"
+            )
+    
         return matches[0]
+    
+    #@staticmethod
+    #def match_name_to_sim_env(name, object_names):
+    #    # Match prefix
+    #    prefix = name.split('_')[0]
+    #    filtered_object_names = [obj_name for obj_name in object_names if prefix in obj_name]
+    #    
+    #    # Match suffix
+    #    suffix = '_'+name.split('_')[1]
+    #    matches = [obj_name for obj_name in filtered_object_names if suffix in obj_name]
+    #
+    #    # Assert uniqueness
+    #    assert len(matches) == 1, f"Too many or too little matches ({len(matches)}), expected only 1."
+    #    # Return only match
+    #    return matches[0]
 
 # Helper class to sample efficiently positions to navigate to
 class AnnularSampler:
