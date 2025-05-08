@@ -93,6 +93,11 @@ async def execute_action(action_request: ActionRequest):
             image=img_str,
             symbolic_state=symbolic_state if symbolic_state is not None else {}
         )
+    except ValueError as ve:
+        print(f"ValueError executing action: {action_request.action} with params: {action_request.params}")
+        traceback.print_exc()
+        raise HTTPException(status_code=400, detail=f"Invalid action: {str(ve)}")
+
     except Exception as e:
         print(f"Error executing action: {action_request.action} with params: {action_request.params}")
         traceback.print_exc()
@@ -116,6 +121,10 @@ async def reset_environment(reset_request: ResetRequest):
         return {
             "success": True
         }
+    except ValueError as ve:
+        print(f"ValueError initialising: {reset_request.task} - {reset_request.scene_id}")
+        traceback.print_exc()
+        raise HTTPException(status_code=400, detail=f"Invalid reset: {str(ve)}")
     except Exception as e:
         print("Error during environment reset.")
         traceback.print_exc()

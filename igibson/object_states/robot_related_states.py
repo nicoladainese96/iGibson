@@ -317,6 +317,14 @@ class VisiblePixelCountFromRobot(ObjectsInFOVOfRobot):
     def _compute_value(self):
         # Render instance segmentation
         seg = self.render_single_robot_camera(modes="ins_seg")[0][:, :, 0]
+
+        # Sometimes faulty segmentations happen
+        if np.any(np.isnan(seg)) or np.any(np.isinf(seg)):
+            raise ValueError("Segmentation map contains NaN or Inf values!")
+
+        seg = np.nan_to_num(seg, nan=0.0, posinf=0.0, neginf=0.0)  # Replace invalids with 0
+        seg = np.clip(seg, 0.0, 1.0)  # Assuming seg is normalized [0, 1]
+        
         seg = np.round(seg * MAX_INSTANCE_COUNT).astype(int)
         body_ids = self.simulator.renderer.get_pb_ids_for_instance_ids(seg)
 
