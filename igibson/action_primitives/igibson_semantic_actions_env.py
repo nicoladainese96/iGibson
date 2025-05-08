@@ -253,6 +253,13 @@ class iGibsonSemanticActionEnv(ABC):
         legal = True
         return legal, info, image, symbolic_state
 
+    def reset_robot_pose(self):
+        # Reset the robot pose
+        self.robot.reset()
+        self.robot.keep_still()
+        image, symbolic_state = self._finish_action(do_physics_steps=True)
+        return image, symbolic_state
+
     def close(self, obj_name, outer_attempts=5):
         # Check that object exist
         if obj_name not in self.env.task.object_scope:
@@ -290,6 +297,7 @@ class iGibsonSemanticActionEnv(ABC):
         #    print("is_visible: ", is_visible)
 
         for i in range(outer_attempts):
+            robot_distance = self._get_obj_distance_from_robot(container_obj)
             # Enforce preconditions: reachable, open, empty_hand
             reachable = self._is_reachable(obj_name)
             is_open = self._is_open(obj_name)
@@ -318,7 +326,7 @@ class iGibsonSemanticActionEnv(ABC):
                     image.show()
                     print(f"Attempt {i}: Action succeeded but target object is not closed!")
                 if i < outer_attempts - 1:
-                    pose_2d = self._sample_pose_near_object(container_obj)
+                    pose_2d = self._sample_pose_near_object(container_obj, min_dist=1.25 * robot_distance)
                     if self.debug:
                         print(f"Attempt {i}: container is still open, trying to reset robot position to {pose_2d}...")
                     if pose_2d is not None:
@@ -332,6 +340,20 @@ class iGibsonSemanticActionEnv(ABC):
                                 print("Go-to action succeeded but target object is not reachable!")
             else:
                 break
+        # Reset the robot pose
+        image, symbolic_state = self.reset_robot_pose()
+
+        is_visible = self._is_visible(obj_name)
+        if not is_visible:
+            pose_2d = self._sample_pose_near_object(container_obj)
+            if self.debug:
+                print(f"container is not visible, trying to reset robot position to {pose_2d}...")
+            if pose_2d is not None:
+                self.robot.set_position_orientation(*self._get_robot_pose_from_2d_pose(pose_2d))
+                success = True
+                image, symbolic_state = self._finish_action(do_physics_steps=True)
+            is_visible = self._is_visible(obj_name)
+            print(obj_name, "is_visible now: ", is_visible)
 
         # Last sanity check
         if symbolic_state['open'][obj_name]: # should be False, i.e. closed
@@ -387,9 +409,7 @@ class iGibsonSemanticActionEnv(ABC):
             debug=self.verbose)
 
         # Reset the robot pose
-        self.robot.reset()
-        self.robot.keep_still()
-        image, symbolic_state = self._finish_action(do_physics_steps=True)
+        image, symbolic_state = self.reset_robot_pose()
 
         if success and self.debug:
             assert symbolic_state['inside'][f'{trg_obj_name},{container_obj_name}'] == True, "Action succeeded but target object is not inside container object!"
@@ -892,7 +912,7 @@ class iGibsonSemanticActionEnv(ABC):
             grasp_pose, object_direction = random.choice(grasp_poses)
         return grasp_pose, object_direction
         
-    def _sample_pose_near_object(self, obj):
+    def _sample_pose_near_object(self, obj, min_dist=None):
         object_center, orientation = obj.get_position_orientation()
 
         # Gradually expand the search with the budget
@@ -903,6 +923,8 @@ class iGibsonSemanticActionEnv(ABC):
         for yaw_range, min_distance, max_distance in zip(yaw_ranges, min_distances, max_distances):
             sampling_budget = MAX_ATTEMPTS_FOR_SAMPLING_POSE_NEAR_OBJECT//3
             # Pseudo-random efficient sampler
+            if min_dist is not None:
+                min_distance = min(min_dist, min_distance)
             sampler = AnnularSampler(
                 center=object_center,
                 orientation=orientation,
