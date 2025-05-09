@@ -1125,11 +1125,8 @@ class iGibsonSemanticActionEnv(ABC):
             prefix = '_'.join(parts[:-1])
             suffix = '_'+parts[-1]
 
-        print(f"prefix {prefix} - suffix {suffix}")
         filtered_object_names = [obj_name for obj_name in object_names if prefix in obj_name]
-        print("filtered_object_names ", filtered_object_names)
         matches = [obj_name for obj_name in filtered_object_names if suffix in obj_name]
-        print("matches ", matches)
         if len(matches) != 1:
             raise ValueError(
                 f"Found {len(matches)} matches for '{name}' in object names, expected exactly one. "
