@@ -17,9 +17,6 @@ from igibson.primitives_utils import open_and_make_all_obj_visible, settle_physi
 import igibson.render_utils as render_utils
 from igibson.custom_utils import get_env_config
 
-# Only for debugging
-from igibson.object_states.robot_related_states import compute_projected_area
-
 MAX_ATTEMPTS_FOR_SAMPLING_POSE_NEAR_OBJECT = 160
 PHYSICS_STEPS = 3
 GUARANTEED_GRASPABLE_WIDTH = 0.18
@@ -49,7 +46,7 @@ class iGibsonSemanticActionEnv(ABC):
         'open-container':'open',
         'close-container':'close',
         'navigate-to':'go_to',
-        'slice':'slice' # not implemented yet, but let's see
+        'slice':'slice' # not implemented
     }
     
     def __init__(self, task, scene_id, instance_id=0, verbose=False, debug=False):
@@ -59,8 +56,6 @@ class iGibsonSemanticActionEnv(ABC):
         env_config["task_id"] = 0
         env_config["instance_id"] = instance_id
         robot_name = env_config["robot"]["name"] # Keep this in memory as it's removed from the config when we init iGibson
-
-        # TODO: add grasping_mode="assisted" or "sticky" to be passed all the way to the robot 
         env_config["robot"]["grasping_mode"] = "assisted"
         self.env = iGibsonEnv(
                 config_file=env_config,
@@ -80,7 +75,7 @@ class iGibsonSemanticActionEnv(ABC):
         self.verbose = verbose
         self.debug = debug # activates assert statements at the end of the actions
 
-    # Some methods are left as abstract just because are still to be implemented, others because they are embodiment-depenedent
+    # Some methods are left as abstract because they are embodiment-depenedent
     @abstractmethod
     def slice(self, trg_obj_name): pass
     
@@ -109,7 +104,7 @@ class iGibsonSemanticActionEnv(ABC):
           action['params']: list[str]
         """
         # Translate from pddl convention to internal methods and objects' names
-        # e.g. 
+        # e.g. from {'action':'navigate-to','params'=['book_1']} to {'action':'go_to','params'=['book.n.01_1']}
         translated_action = self.translate_action(action)
         
         if hasattr(self, translated_action['action']):
@@ -131,8 +126,6 @@ class iGibsonSemanticActionEnv(ABC):
             raise ValueError(f"Unknown action name: '{action_name}'. Valid actions are: {list(self.SIM_ENV_ACTION_NAMES.keys())}")
         
         # Process action arguments
-
-        # Loop over action_args and translate them to sim_env names
         object_names = list(self.env.task.object_scope.keys()) # this should include floors as well
     
         translated_action_args = []
@@ -195,34 +188,7 @@ class iGibsonSemanticActionEnv(ABC):
             legal = False
             return legal, "not legal", image, symbolic_state
 
-        container_obj = self.env.task.object_scope[obj_name] 
-        
-        # Enforce preconditions: reachable, not open, empty_hand
-        #if self.verbose:
-        #    distance_from_container = self._get_obj_distance_from_robot(container_obj)
-        #    print("distance_from_container: ", distance_from_container)
-        #    is_near = distance_from_container < self.ROBOT_DISTANCE_THRESHOLD
-        #    print("is_near: ", is_near)
-        #    _is_near = self._is_near(obj_name)
-        #    print("_is_near: ", _is_near)
-        #
-        #    # Visibility sanity check
-        #    total_visible_pixels = container_obj.states[object_states.VisiblePixelCountFromRobot].get_value()
-        #    print("total_visible_pixels: ", total_visible_pixels)
-        #    bbox_vertices_uv = render_utils.get_bbox_vertices_uv(self.env, container_obj)
-        #    print("bbox_vertices_uv: ", bbox_vertices_uv)
-        #    # Clip vertices within image bounds
-        #    H = self.env.config['image_height']
-        #    W = self.env.config['image_width']
-        #    
-        #    projected_bbox_pixels = compute_projected_area(bbox_vertices_uv, H, W)
-        #    print("projected_bbox_pixels: ", projected_bbox_pixels)
-        #    ratio = total_visible_pixels / (projected_bbox_pixels + 1)
-        #    print("ratio: ", ratio)
-        #    print("threshold: ", 0.08)
-        #    is_visible = self._is_visible(obj_name)
-        #    print("is_visible: ", is_visible)
-            
+        container_obj = self.env.task.object_scope[obj_name]     
         reachable = self._is_reachable(obj_name)
         is_openable = self._is_openable(obj_name)
         is_open = self._is_open(obj_name)
@@ -264,89 +230,6 @@ class iGibsonSemanticActionEnv(ABC):
         image, symbolic_state = self._finish_action(do_physics_steps=True)
         return image, symbolic_state
         
-#    def close(self, obj_name, outer_attempts=5):
-#        # Check that object exist
-#        if obj_name not in self.env.task.object_scope:
-#            print(f"Object {obj_name} not in task object scope.")
-#            image, symbolic_state = self._finish_action()
-#            legal = False
-#            return legal, "not legal", image, symbolic_state
-#
-#        container_obj = self.env.task.object_scope[obj_name] 
-#
-#        for i in range(outer_attempts):
-#            robot_distance = self._get_obj_distance_from_robot(container_obj)
-#            # Enforce preconditions: reachable, open, empty_hand
-#            reachable = self._is_reachable(obj_name)
-#            is_open = self._is_open(obj_name)
-#            empty_hand = self._get_obj_in_hand() is None
-#            if not reachable or not is_open or not empty_hand:
-#                print(f"Preconditions not satisfied. reachable={reachable} ; is_open={is_open} ; empty_hand={empty_hand}")
-#                image, symbolic_state = self._finish_action()
-#                legal = False
-#                return legal, "not legal", image, symbolic_state
-#            
-#            # Execute action
-#            if self.debug:
-#                print(f"attempt {i} at closing")
-#            success = close_container(
-#                self,
-#                container_obj,
-#                debug=self.verbose,
-#            )
-#            image, symbolic_state = self._finish_action()
-#
-#            if success and self.debug:
-#                is_visible = self._is_visible(obj_name)
-#                print(obj_name, "is_visible: ", is_visible)
-#                
-#            if symbolic_state['open'][obj_name]:
-#                if self.debug:
-#                    image.show()
-#                    print(f"Attempt {i}: Action succeeded but target object is not closed!")
-#                if i < outer_attempts - 1:
-#                    pose_2d = self._sample_pose_near_object(container_obj, min_dist=1.25 * robot_distance)
-#                    if self.debug:
-#                        print(f"Attempt {i}: container is still open, trying to reset robot position to {pose_2d}...")
-#                    if pose_2d is not None:
-#                        self.robot.set_position_orientation(*self._get_robot_pose_from_2d_pose(pose_2d))
-#                        success = True
-#                        image, symbolic_state = self._finish_action(do_physics_steps=True)
-#
-#                        if self.debug:
-#                            image.show()
-#                            if not symbolic_state['reachable'][obj_name]:
-#                                print("Go-to action succeeded but target object is not reachable!")
-#            else:
-#                # Successfully closed
-#                break
-#                
-#        # Reset the robot pose
-#        image, symbolic_state = self.reset_robot_pose()
-#
-#        is_visible = self._is_visible(obj_name)
-#        if not is_visible:
-#            pose_2d = self._sample_pose_near_object(container_obj)
-#            if self.debug:
-#                print(f"container is not visible, trying to reset robot position to {pose_2d}...")
-#            if pose_2d is not None:
-#                self.robot.set_position_orientation(*self._get_robot_pose_from_2d_pose(pose_2d))
-#                success = True
-#                image, symbolic_state = self._finish_action(do_physics_steps=True)
-#            is_visible = self._is_visible(obj_name)
-#            print(obj_name, "is_visible now: ", is_visible)
-#
-#        # Last sanity check
-#        if symbolic_state['open'][obj_name]: # should be False, i.e. closed
-#            success = False
-#            
-#        if success:
-#            info = 'success'
-#        else:
-#            info = 'executed but failed'
-#        legal = True
-#        return legal, info, image, symbolic_state
-        
     def close(self, obj_name): 
         # Check that object exist
         if obj_name not in self.env.task.object_scope:
@@ -356,33 +239,7 @@ class iGibsonSemanticActionEnv(ABC):
             return legal, "not legal", image, symbolic_state
 
         container_obj = self.env.task.object_scope[obj_name] 
-
-        #if self.verbose:
-        #    # Distance sanity check
-        #    distance_from_container = self._get_obj_distance_from_robot(container_obj)
-        #    print("distance_from_container: ", distance_from_container)
-        #    is_near = distance_from_container < self.ROBOT_DISTANCE_THRESHOLD
-        #    print("is_near: ", is_near)
-        #    _is_near = self._is_near(obj_name)
-        #    print("_is_near: ", _is_near)
-        #
-        #    # Visibility sanity check
-        #    total_visible_pixels = container_obj.states[object_states.VisiblePixelCountFromRobot].get_value()
-        #    print("total_visible_pixels: ", total_visible_pixels)
-        #    bbox_vertices_uv = render_utils.get_bbox_vertices_uv(self.env, container_obj)
-        #    print("bbox_vertices_uv: ", bbox_vertices_uv)
-        #    # Clip vertices within image bounds
-        #    H = self.env.config['image_height']
-        #    W = self.env.config['image_width']
-        #    
-        #    projected_bbox_pixels = compute_projected_area(bbox_vertices_uv, H, W)
-        #    print("projected_bbox_pixels: ", projected_bbox_pixels)
-        #    ratio = total_visible_pixels / (projected_bbox_pixels + 1)
-        #    print("ratio: ", ratio)
-        #    print("threshold: ", 0.08)
-        #    is_visible = self._is_visible(obj_name)
-        #    print("is_visible: ", is_visible)
-            
+        
         # Enforce preconditions: reachable, open, empty_hand
         reachable = self._is_reachable(obj_name)
         is_open = self._is_open(obj_name)
@@ -651,31 +508,6 @@ class iGibsonSemanticActionEnv(ABC):
         robot_data = self.robot.dump_state()
         env_state = p.saveState()
 
-        # For temporary debug - close the gripper and then revert the state
-        #if self.verbose:
-        #    max_steps = 10
-        #    for i, action in enumerate(self._execute_grasp()):
-        #        
-        #        # Grasp in the air
-        #        self.robot.apply_action(action)
-        #        self._settle_physics(steps=1)
-        #    
-        #        # Render
-        #        render_utils.render_frame_with_trg_obj(
-        #            self.env, trg_obj,
-        #            show=True, save=True,
-        #            name=f'grasping_check_{i}'
-        #        )
-        #        
-        #        # Exit at most after max_steps
-        #        if i+1 == max_steps:
-        #            break
-        #            
-        #    # Revert the state
-        #    self.robot.load_state(robot_data)
-        #    restoreState(env_state)
-        #    self._settle_physics(steps=1)
-            
         for attempt in range(1, sample_budget + 1):
             if self.verbose:
                 print(f"\n--- Grasp attempt {attempt}/{sample_budget} ---")
@@ -798,12 +630,8 @@ class iGibsonSemanticActionEnv(ABC):
 
         # unary - all commented one are computable but not needed
         uni_specs = {
-            #'is_near':      self._is_near,
-            #'is_visible':   self._is_visible,
             'reachable': self._is_reachable,
             'holding':   self._is_holding,
-            #'is_movable':   self._is_movable,
-            #'is_openable':  self._is_openable,
             'open':      self._is_open,
         }
         for o in objs:
@@ -854,7 +682,6 @@ class iGibsonSemanticActionEnv(ABC):
         return visible_objs
 
     def translate_symbolic_state(self, symbolic_state):
-
         translated_symbolic_state = {}
         # First level contains predicate names, e.g. 'reachable' and 'ontop'
         for pred in symbolic_state.keys():
@@ -966,7 +793,6 @@ class iGibsonSemanticActionEnv(ABC):
         return grasp_pose, object_direction
     def _sample_pose_near_object(self, obj, min_dist=None):
         object_center, orientation = obj.get_position_orientation()
-        #orientation = patch_orientation_for_certain_obj(orientation, obj)
         
         # Gradually expand the search with the budget
         yaw_ranges = [45, 60, 90, 180]
@@ -1201,33 +1027,3 @@ class AnnularSampler:
         pos = self._point_from_yaw_and_distance(yaw, distance)
         yaw_rad = np.arctan2(self.center[1] - pos[1], self.center[0] - pos[0])
         return np.array([pos[0], pos[1], yaw_rad])
-
-#def patch_orientation_for_certain_obj(orientation, obj):
-#    name = obj.bddl_object_scope
-#    
-#    if 'window' in name:
-#
-#        if name == 'window.n.01_1':
-#            rot = 0
-#        elif name == "window.n.01_2":
-#            rot = 180
-#        elif name == "window.n.01_3":
-#            rot = -90
-#        elif name == "window.n.01_4":
-#            rot = 0
-#        else:
-#            pass
-#            
-#        local_forward = [0,1,0]
-#        local_yaw_rot = Rotation.from_euler('z', rot).apply(local_forward)
-#        
-#        def wxyz_to_xyzw(q):
-#            return [q[1], q[2], q[3], q[0]]
-#
-#        def xyzw_to_wxyz(q):
-#            return [q[-1], q[0], q[1], q[2]]
-#        
-#        orientation_xyzw = wxyz_to_xyzw(orientation)
-#        orientation_xyzw = p.rotateVector(orientation_xyzw, local_yaw_rot)
-#        orientation = xyzw_to_wxyz(orientation_xyzw)
-#        return orientation

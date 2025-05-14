@@ -1,12 +1,3 @@
-# TODO: 
-# set ROBOT_DISTANCE_THRESHOLD
-# set arm
-# - implement:
-# - _reach_and_grasp (uses _execute_grasp with action[self.robot.controller_action_idx["gripper_right_hand"]] = -1.0  which might be too specific)
-# - _get_obj_in_hand (uses self.arm - check that generalises)
-# - _move_gripper_to_pose (uses self.arm - check that generalises)
-# - _get_grasp_pose_for_object (double-check get_grasp_poses_for_object implementation)
-
 from .igibson_semantic_actions_env import iGibsonSemanticActionEnv
 
 import random
@@ -140,7 +131,7 @@ class FetchRobotSemanticActionEnv(iGibsonSemanticActionEnv):
         if reach:
             target_pos = trg_obj.get_position() - reach_offset * object_direction
 
-            # TODO: add this method to the class
+            # Not implemented, works fine without
             #for _ in controller._move_hand((target_pos, grasp_orn), stop_on_contact=True):
             #    yield _  # Executes planned motion until contact
     

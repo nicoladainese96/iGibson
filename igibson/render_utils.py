@@ -421,11 +421,6 @@ def annotate_bbox(image, obj, bbox_vertices_uv, sim_env):
         if (0 <= pos_x <= image.width - label_width) and (0 <= pos_y <= image.height - label_height):
             draw.text((pos_x, pos_y), label, font_size=100, fill="red")
 
-            # Draw white background rectangle
-            #draw.rectangle([pos_x, pos_y, pos_x + label_width, pos_y + label_height], fill="white")
-            # Draw black text
-            #draw.text((pos_x, pos_y), label, font_size=100, fill="black") # might break with fontsize=100
-
             # Actually the position from which to start the segment depends on the case
             draw.line([pos_x-2, pos_y+label_height//2, uv[0], uv[1]], fill="red", width=2)  # Draw red segment
             success = True
@@ -438,11 +433,6 @@ def annotate_bbox(image, obj, bbox_vertices_uv, sim_env):
         pos_y = uv[1] - label_height - 10
 
         draw.text((pos_x, pos_y), label, font_size=100, fill="red")
-        
-        # Draw white background rectangle
-        #draw.rectangle([pos_x, pos_y, pos_x + label_width, pos_y + label_height], fill="white")
-        # Draw black text
-        #draw.text((pos_x, pos_y), label, font_size=100, fill="black") # might break with fontsize=100
         
         draw.line([pos_x + label_width, pos_y+label_height//2, uv[0], uv[1]], fill="red", width=2)  # Draw red segment
 

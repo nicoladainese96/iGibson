@@ -19,23 +19,14 @@ def get_env_config():
         )
     env_config = parse_config(env_config_file)
     # Modify env_config - later we can make our own
-    env_config['image_width'] = 480 #1080
-    env_config['image_height'] = 480 #1080
+    env_config['image_width'] = 480 
+    env_config['image_height'] = 480 
 
     # Improve realism
     env_config["enable_pbr"] = True
     env_config["enable_shadow"] = True
-    #env_config["texture_scale"] = 1.0 # no difference from 1.0 to 2.0
     env_config["optimized_renderer"] = False # True needed for highlighting, False better for image quality 
     env_config["load_texture"] = True # necessary
-    
-    # change igibson/envs/env_base.py in order to read this, ~L76
-    #- msaa=False
-    #+ msaa=self.config.get("msaa", False),
-    
-    # with True it complains about a bunch of stuff :
-    # Rendering segmentation masks with MSAA on may generate interpolation artifacts. 
-    # It is recommended to turn MSAA off when rendering segmentation.
     env_config["msaa"] = False 
     
     # No idea what all this stuff is, but we might want to remove everything that is not useful once we inspect it

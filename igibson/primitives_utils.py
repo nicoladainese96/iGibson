@@ -29,15 +29,12 @@ def check_collision_two_bodies(obj1, obj2, tol=1e-2):
 
     for obj_id1 in obj_ids1:
         for obj_id2 in obj_ids2:
-            #closest_points = p.getClosestPoints(obj_id1, obj_id2, distance)
             contact_points = p.getContactPoints(obj_id1, obj_id2)
             for contact_point in contact_points:
                 contactFlag, bodyUniqueIdA, bodyUniqueIdB, linkIndexA, linkIndexB, positionOnA, positionOnB, contactNormalOnB, contactDistance, normalForce, lateralFriction1, lateralFrictionDir1, lateralFriction2, lateralFrictionDir2 = contact_point
                 # Debug print
-                #print('contactDistance', contactDistance)
                 if contactDistance < 0 and np.abs(contactDistance)>tol:
                     # Then we have significant penetration between the two bodies
-                    #print("\nContact distance of penetration point: ", contactDistance)
                     return True
     
     return False
@@ -49,11 +46,8 @@ def check_collision_one_body(obj1, tol=1e-2):
             contact_points = p.getContactPoints(obj_id1)
             for contact_point in contact_points:
                 contactFlag, bodyUniqueIdA, bodyUniqueIdB, linkIndexA, linkIndexB, positionOnA, positionOnB, contactNormalOnB, contactDistance, normalForce, lateralFriction1, lateralFrictionDir1, lateralFriction2, lateralFrictionDir2 = contact_point
-                # Debug print
-                #print('contactDistance', contactDistance)
                 if contactDistance < 0 and np.abs(contactDistance)>tol:
                     # Then we have significant penetration between the two bodies
-                    #print("\nContact distance of penetration point: ", contactDistance)
                     return True
     
     return False
@@ -66,8 +60,6 @@ def get_task_objects(env):
 
 def print_status_within_container(sim_env, container_obj, max_distance_from_shoulder=0.9):
     filtered_object_names_list = get_task_objects(sim_env.env)
-    #controller = get_controller(env)
-    
     for name in filtered_object_names_list:
         obj2 = sim_env.env.task.object_scope[name]
         is_inside = obj2.states[object_states.inside.Inside].get_value(container_obj)
@@ -125,7 +117,6 @@ def get_names_of_visible_obj_inside(env, container_obj):
 
 def open_or_close(sim_env, container_obj): # Not used anywhere so far
     state_before_action = p.saveState()
-    #print(f"{container_obj.bddl_object_scope} is open: {container_obj.states[object_states.Open].get_value()}")
     
     if not container_obj.states[object_states.Open].get_value():
         container_obj.states[object_states.Open].set_value(True) # check out if this is enough
@@ -139,12 +130,10 @@ def open_or_close(sim_env, container_obj): # Not used anywhere so far
         
     sim_env._settle_physics()
 
-    #print(f"{container_obj.bddl_object_scope} is open: {container_obj.states[object_states.Open].get_value()}")
     return state_before_action, [container_obj]
     
 def open_container(sim_env, container_obj):
     state_before_action = p.saveState()
-    #print(f"{container_obj.bddl_object_scope} is open: {container_obj.states[object_states.Open].get_value()}")
     
     if not container_obj.states[object_states.Open].get_value():
         container_obj.states[object_states.Open].set_value(True) # check out if this is enough
@@ -155,7 +144,6 @@ def open_container(sim_env, container_obj):
             
         sim_env._settle_physics()
 
-    #print(f"{container_obj.bddl_object_scope} is open: {container_obj.states[object_states.Open].get_value()}")
     return state_before_action, [container_obj]
 
 def reset_state(sim_env, state_before, list_of_obj_to_awake):
@@ -188,7 +176,6 @@ def close_container(sim_env, container_obj, sampling_budget=200, debug=False):
                         return False
             
     def resample_inside(obj, sampler, sim_env):
-        #candidate_pos = sample_point_in_container(container_obj)
         candidate_pos = sampler.sample(repeat=True)
         obj.set_position(candidate_pos)
         sim_env._settle_physics(steps=10)
@@ -363,13 +350,6 @@ def open_and_make_all_obj_visible(
     max_distance_from_shoulder=1.0,
     debug=False
 ):
-
-    # Before   
-    #assert container_obj.states[object_states.Open].get_value() == False, "Container should be closed to use this action!"
-    
-    # Define controller - used to compute distances from robot shoulder - could be streamlined further as the full controller is not needed
-    #controller = get_controller(env)
-    
     # Save original state - before being open
     original_container_state = p.saveState()
     objects_to_wake = []
@@ -563,7 +543,6 @@ def make_visible(sim_env, trg_obj, container_obj, objects_positioned=[], samplin
         restoreState(pb_initial_state)
         
         # Sample 3d point inside the container volume
-        #candidate_pos = sample_point_in_container(container_obj)
         candidate_pos = sampler.sample(repeat=True)
         
         is_near = sim_env._get_distance_from_robot(candidate_pos) < max_distance 
