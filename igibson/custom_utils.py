@@ -55,7 +55,7 @@ def get_variations_list(task):
     scene_instance_pairs = []
     
     scene_ids = sorted(set(activity_to_scenes[task])) 
-    instance_ids = [0, 20, 21, 22, 23, 24] # original config and 4 OOD (different furniture and so on)
+    instance_ids = [0, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29] # original config and 4 OOD (different furniture and so on)
     
     if len(scene_ids) == 3:
         for scene_id in scene_ids: # for the first 2 scenes

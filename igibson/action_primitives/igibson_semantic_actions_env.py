@@ -902,7 +902,7 @@ class iGibsonSemanticActionEnv(ABC):
 
     def _is_movable(self, obj_name):
         obj = self.get_obj_from_name(obj_name)
-        _, _, extents, _ = obj.get_base_aligned_bounding_box(visual=False)
+        _, _, extents, _ = obj.get_base_aligned_bounding_box(visual=False, fallback_to_aabb=True)
         return bool(np.any(extents < GUARANTEED_GRASPABLE_WIDTH))
 
     def _is_openable(self, obj_name):

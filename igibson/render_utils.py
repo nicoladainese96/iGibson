@@ -279,7 +279,7 @@ def get_bbox_vertices_uv_coord(env, obj):
     s = env.simulator
 
     # Get bbox info
-    bbox_center_in_wf, bbox_orn_in_wf, bbox_extent_obj_frame, bbox_center_obj_frame  = obj.get_base_aligned_bounding_box(visual=True) 
+    bbox_center_in_wf, bbox_orn_in_wf, bbox_extent_obj_frame, bbox_center_obj_frame  = obj.get_base_aligned_bounding_box(visual=True, fallback_to_aabb=True) 
 
     # Form 8 vertices in the frame of reference of the object itself - we should use a more interpretable code maybe
     vertex_positions_obj_frame = np.array(list(itertools.product((1, -1), repeat=3))) * (
