@@ -17,6 +17,6 @@ while [[ $# -gt 0 ]]; do
 done
 
 # activate & start
-source myenv/bin/activate
+source igibson_env/bin/activate
 cd iGibson/sim_server
 uvicorn igibson_server:app --host 0.0.0.0 --port "${PORT}" --reload
